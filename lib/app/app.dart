@@ -8,7 +8,7 @@ class FilmnomaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Филмнома v0.1',
+      title: 'Filmsoz Studio v2',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       home: const EditorMainScreen(),
