@@ -8,6 +8,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/controller/screenplay_editor_controller.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_block_widget.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sheet.dart';
+import 'package:filmsoz_studio/features/screenplay/formatting/smart_formatting_service.dart';
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/project_file_service.dart';
@@ -25,6 +26,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   late final ScreenplayEditorController _controller;
   final ProjectFileService _projectFileService = const ProjectFileService();
   final FountainFileService _fountainFileService = const FountainFileService();
+  final SmartFormattingService _smartFormattingService =
+      const SmartFormattingService();
 
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollAreaKey = GlobalKey();
@@ -282,13 +285,13 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     final newLineIndex = text.indexOf('\n');
 
     if (newLineIndex == -1) {
-      _controller.updateBlockText(blockId, text);
+      _updateBlockWithSmartFormatting(blockId, text);
       return;
     }
 
-    // Shift + Enter оставляет перенос внутри текущего блока.
+    // Shift + Enter leaves a line break inside the current block.
     if (HardwareKeyboard.instance.isShiftPressed) {
-      _controller.updateBlockText(blockId, text);
+      _updateBlockWithSmartFormatting(blockId, text);
       return;
     }
 
@@ -306,6 +309,36 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       block: block,
       textBeforeCursor: text.substring(0, newLineIndex),
       textAfterCursor: text.substring(newLineIndex + 1),
+    );
+  }
+
+  void _updateBlockWithSmartFormatting(
+    String blockId,
+    String text,
+  ) {
+    final blockIndex = _controller.document.blocks.indexWhere(
+      (block) => block.id == blockId,
+    );
+
+    if (blockIndex == -1) {
+      return;
+    }
+
+    final block = _controller.document.blocks[blockIndex];
+    final previousType = blockIndex > 0
+        ? _controller.document.blocks[blockIndex - 1].type
+        : null;
+
+    final inferredType = _smartFormattingService.detectLiveType(
+      text: text,
+      currentType: block.type,
+      previousType: previousType,
+    );
+
+    _controller.updateBlockContent(
+      blockId,
+      text: text,
+      inferredType: inferredType,
     );
   }
 
@@ -359,16 +392,30 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       return;
     }
 
-    textController.value = TextEditingValue(
+    final blockIndex = _controller.document.blocks.indexWhere(
+      (item) => item.id == block.id,
+    );
+    final previousType = blockIndex > 0
+        ? _controller.document.blocks[blockIndex - 1].type
+        : null;
+
+    final formatted = _smartFormattingService.finalizeBlock(
       text: textBeforeCursor,
-      selection: TextSelection.collapsed(offset: textBeforeCursor.length),
+      currentType: block.type,
+      previousType: previousType,
+    );
+
+    textController.value = TextEditingValue(
+      text: formatted.text,
+      selection: TextSelection.collapsed(offset: formatted.text.length),
     );
 
     final newBlock = _controller.splitBlock(
       id: block.id,
-      textBeforeCursor: textBeforeCursor,
+      textBeforeCursor: formatted.text,
       textAfterCursor: textAfterCursor,
-      nextType: _nextTypeAfterEnter(block.type),
+      currentType: formatted.type,
+      nextType: _nextTypeAfterEnter(formatted.type),
     );
 
     _syncEditors();

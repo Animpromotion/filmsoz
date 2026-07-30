@@ -105,14 +105,31 @@ class ScreenplayEditorController extends ChangeNotifier {
   }
 
   void updateBlockText(String id, String text) {
+    updateBlockContent(id, text: text);
+  }
+
+  void updateBlockContent(
+    String id, {
+    required String text,
+    BlockType? inferredType,
+  }) {
     final index = _document.blocks.indexWhere((block) => block.id == id);
 
-    if (index == -1 || _document.blocks[index].text == text) {
+    if (index == -1) {
+      return;
+    }
+
+    final block = _document.blocks[index];
+    final nextType = inferredType ?? block.type;
+
+    if (block.text == text && block.type == nextType) {
       return;
     }
 
     _recordTypingHistory(id);
-    _document.blocks[index].text = text;
+    block
+      ..text = text
+      ..type = nextType;
     _markDocumentChanged();
   }
 
@@ -134,6 +151,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     required String textBeforeCursor,
     required String textAfterCursor,
     required BlockType nextType,
+    BlockType? currentType,
   }) {
     _finishTypingGroup();
     _pushUndoSnapshot();
@@ -149,7 +167,9 @@ class ScreenplayEditorController extends ChangeNotifier {
     if (index == -1) {
       _document.blocks.add(newBlock);
     } else {
-      _document.blocks[index].text = textBeforeCursor;
+      _document.blocks[index]
+        ..text = textBeforeCursor
+        ..type = currentType ?? _document.blocks[index].type;
       _document.blocks.insert(index + 1, newBlock);
     }
 
