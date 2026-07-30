@@ -20,17 +20,22 @@ class EditorMainScreen extends StatefulWidget {
 class _EditorMainScreenState extends State<EditorMainScreen> {
   final ScreenplayEditorController _controller = ScreenplayEditorController();
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _scrollAreaKey = GlobalKey();
 
   final Map<String, TextEditingController> _textControllers = {};
   final Map<String, FocusNode> _focusNodes = {};
+  final Map<String, GlobalKey> _blockKeys = {};
 
   bool _isSplittingBlock = false;
+  bool _scrollUpdateScheduled = false;
+  String? _activeSceneId;
 
   @override
   void initState() {
     super.initState();
 
     _controller.addListener(_onDocumentChanged);
+    _scrollController.addListener(_scheduleActiveSceneUpdateFromScroll);
     _syncEditors();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -38,15 +43,27 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
         return;
       }
 
+      final firstScene = _controller.document.scenes.firstOrNull;
+      _activeSceneId = firstScene?.id;
+
       _focusBlock(
         _controller.document.blocks.first.id,
         cursorAtEnd: true,
       );
+
+      setState(() {});
     });
   }
 
   void _onDocumentChanged() {
     _syncEditors();
+
+    final sceneIds =
+        _controller.document.scenes.map((scene) => scene.id).toSet();
+
+    if (_activeSceneId != null && !sceneIds.contains(_activeSceneId)) {
+      _activeSceneId = _controller.document.scenes.firstOrNull?.id;
+    }
 
     if (mounted) {
       setState(() {});
@@ -54,9 +71,8 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
   }
 
   void _syncEditors() {
-    final activeIds = _controller.document.blocks
-        .map((block) => block.id)
-        .toSet();
+    final activeIds =
+        _controller.document.blocks.map((block) => block.id).toSet();
 
     final removedIds = _textControllers.keys
         .where((id) => !activeIds.contains(id))
@@ -65,6 +81,7 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
     for (final id in removedIds) {
       final removedController = _textControllers.remove(id);
       final removedFocusNode = _focusNodes.remove(id);
+      _blockKeys.remove(id);
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         removedController?.dispose();
@@ -78,12 +95,24 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
         () => TextEditingController(text: block.text),
       );
 
+      _blockKeys.putIfAbsent(block.id, GlobalKey.new);
+
       _focusNodes.putIfAbsent(
         block.id,
-        () => FocusNode(
-          debugLabel: 'filmsoz-block-${block.id}',
-          onKeyEvent: (_, event) => _handleBlockKey(block.id, event),
-        ),
+        () {
+          final focusNode = FocusNode(
+            debugLabel: 'filmsoz-block-${block.id}',
+            onKeyEvent: (_, event) => _handleBlockKey(block.id, event),
+          );
+
+          focusNode.addListener(() {
+            if (focusNode.hasFocus) {
+              _activateSceneForBlock(block.id);
+            }
+          });
+
+          return focusNode;
+        },
       );
 
       final hasFocus = _focusNodes[block.id]?.hasFocus ?? false;
@@ -118,13 +147,11 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
 
     if (key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter) {
-      debugPrint('[Filmsoz v3] Enter: ${block.id}');
       _splitBlockAtSelection(block);
       return KeyEventResult.handled;
     }
 
     if (key == LogicalKeyboardKey.tab) {
-      debugPrint('[Filmsoz v3] Tab: ${block.id}');
       _changeBlockType(
         block,
         reverse: HardwareKeyboard.instance.isShiftPressed,
@@ -140,9 +167,8 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
       }
 
       final selection = textController.selection;
-      final cursorAtBeginning = selection.isValid &&
-          selection.isCollapsed &&
-          selection.start == 0;
+      final cursorAtBeginning =
+          selection.isValid && selection.isCollapsed && selection.start == 0;
 
       if (textController.text.isEmpty &&
           cursorAtBeginning &&
@@ -177,14 +203,11 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
     }
 
     final block = _controller.document.blocks[blockIndex];
-    final textBeforeCursor = text.substring(0, newLineIndex);
-    final textAfterCursor = text.substring(newLineIndex + 1);
 
-    debugPrint('[Filmsoz v3] Enter fallback: ${block.id}');
     _splitBlockWithText(
       block: block,
-      textBeforeCursor: textBeforeCursor,
-      textAfterCursor: textAfterCursor,
+      textBeforeCursor: text.substring(0, newLineIndex),
+      textAfterCursor: text.substring(newLineIndex + 1),
     );
   }
 
@@ -285,15 +308,11 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
       final textController = _textControllers[block.id];
       _focusNodes[block.id]?.requestFocus();
 
-      if (textController != null &&
-          selection != null &&
-          selection.isValid) {
-        final baseOffset = selection.baseOffset
-            .clamp(0, textController.text.length)
-            .toInt();
-        final extentOffset = selection.extentOffset
-            .clamp(0, textController.text.length)
-            .toInt();
+      if (textController != null && selection != null && selection.isValid) {
+        final baseOffset =
+            selection.baseOffset.clamp(0, textController.text.length).toInt();
+        final extentOffset =
+            selection.extentOffset.clamp(0, textController.text.length).toInt();
 
         textController.selection = TextSelection(
           baseOffset: baseOffset,
@@ -340,6 +359,146 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
     );
   }
 
+  void _activateSceneForBlock(String blockId) {
+    final scene = _findSceneForBlock(blockId);
+
+    if (scene == null || scene.id == _activeSceneId || !mounted) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || scene.id == _activeSceneId) {
+        return;
+      }
+
+      setState(() {
+        _activeSceneId = scene.id;
+      });
+    });
+  }
+
+  FilmBlock? _findSceneForBlock(String blockId) {
+    final blocks = _controller.document.blocks;
+    final blockIndex = blocks.indexWhere((block) => block.id == blockId);
+
+    if (blockIndex == -1) {
+      return null;
+    }
+
+    for (var index = blockIndex; index >= 0; index--) {
+      final block = blocks[index];
+
+      if (block.type == BlockType.sceneHeading) {
+        return block;
+      }
+    }
+
+    return _controller.document.scenes.firstOrNull;
+  }
+
+  Future<void> _selectScene(FilmBlock scene) async {
+    if (mounted && _activeSceneId != scene.id) {
+      setState(() {
+        _activeSceneId = scene.id;
+      });
+    }
+
+    final blockContext = _blockKeys[scene.id]?.currentContext;
+
+    if (blockContext == null) {
+      return;
+    }
+
+    await Scrollable.ensureVisible(
+      blockContext,
+      alignment: 0.08,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    _focusBlock(scene.id, cursorAtEnd: true);
+  }
+
+  void _scheduleActiveSceneUpdateFromScroll() {
+    if (_scrollUpdateScheduled) {
+      return;
+    }
+
+    _scrollUpdateScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollUpdateScheduled = false;
+
+      if (mounted) {
+        _updateActiveSceneFromScroll();
+      }
+    });
+  }
+
+  void _updateActiveSceneFromScroll() {
+    final scrollAreaContext = _scrollAreaKey.currentContext;
+
+    if (scrollAreaContext == null) {
+      return;
+    }
+
+    final scrollAreaBox = scrollAreaContext.findRenderObject();
+
+    if (scrollAreaBox is! RenderBox || !scrollAreaBox.hasSize) {
+      return;
+    }
+
+    final viewportTop = scrollAreaBox.localToGlobal(Offset.zero).dy + 72;
+    final scenes = _controller.document.scenes;
+
+    if (scenes.isEmpty) {
+      return;
+    }
+
+    FilmBlock candidate = scenes.first;
+
+    for (final scene in scenes) {
+      final sceneContext = _blockKeys[scene.id]?.currentContext;
+      final sceneBox = sceneContext?.findRenderObject();
+
+      if (sceneBox is! RenderBox || !sceneBox.hasSize) {
+        continue;
+      }
+
+      final sceneTop = sceneBox.localToGlobal(Offset.zero).dy;
+
+      if (sceneTop <= viewportTop) {
+        candidate = scene;
+      } else {
+        break;
+      }
+    }
+
+    if (candidate.id != _activeSceneId && mounted) {
+      setState(() {
+        _activeSceneId = candidate.id;
+      });
+    }
+  }
+
+  FilmBlock? _findBlockById(String? blockId) {
+    if (blockId == null) {
+      return null;
+    }
+
+    for (final block in _controller.document.blocks) {
+      if (block.id == blockId) {
+        return block;
+      }
+    }
+
+    return null;
+  }
+
   BlockType _nextTypeAfterEnter(BlockType currentType) {
     switch (currentType) {
       case BlockType.sceneHeading:
@@ -359,6 +518,9 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scenes = _controller.document.scenes;
+    final activeScene = _findBlockById(_activeSceneId);
+
     return Scaffold(
       body: Column(
         children: [
@@ -367,11 +529,14 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
             child: Row(
               children: [
                 SceneNavigator(
-                  scenes: _controller.document.scenes,
+                  scenes: scenes,
+                  selectedSceneId: _activeSceneId,
+                  onSceneSelected: _selectScene,
                 ),
                 const VerticalDivider(width: 1),
                 Expanded(
                   child: ColoredBox(
+                    key: _scrollAreaKey,
                     color: const Color(0xFF1E1E1E),
                     child: Scrollbar(
                       controller: _scrollController,
@@ -384,25 +549,17 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                const Text(
-                                  'FILMSOZ EDITOR V3 • ENTER / TAB ACTIVE',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: Color(0xFF777777),
-                                    fontFamily: 'Courier New',
-                                    fontSize: 10,
-                                  ),
-                                ),
-                                const SizedBox(height: 24),
-                                for (final block
-                                    in _controller.document.blocks)
-                                  ScriptBlockWidget(
-                                    block: block,
-                                    textController:
-                                        _textControllers[block.id]!,
-                                    focusNode: _focusNodes[block.id]!,
-                                    onChanged: (text) =>
-                                        _handleTextChanged(block.id, text),
+                                for (final block in _controller.document.blocks)
+                                  KeyedSubtree(
+                                    key: _blockKeys[block.id],
+                                    child: ScriptBlockWidget(
+                                      block: block,
+                                      textController:
+                                          _textControllers[block.id]!,
+                                      focusNode: _focusNodes[block.id]!,
+                                      onChanged: (text) =>
+                                          _handleTextChanged(block.id, text),
+                                    ),
                                   ),
                               ],
                             ),
@@ -416,13 +573,18 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
             ),
           ),
           Container(
-            height: 26,
+            height: 28,
             color: const Color(0xFF252526),
             padding: const EdgeInsets.symmetric(horizontal: 12),
             alignment: Alignment.centerLeft,
-            child: const Text(
-              'Filmsoz v3 | Enter: новый блок | Tab: тип блока | Backspace: удалить пустой блок',
-              style: TextStyle(
+            child: Text(
+              'Сцен: ${scenes.length}  •  '
+              'Блоков: ${_controller.document.blocks.length}  •  '
+              'Активная: ${activeScene?.text.trim().isNotEmpty == true ? activeScene!.text : 'БЕЗ НАЗВАНИЯ'}  •  '
+              'Enter: новый блок  •  Tab: тип блока',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
                 color: Color(0xFFAAAAAA),
                 fontSize: 11,
               ),
@@ -439,6 +601,10 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
       ..removeListener(_onDocumentChanged)
       ..dispose();
 
+    _scrollController
+      ..removeListener(_scheduleActiveSceneUpdateFromScroll)
+      ..dispose();
+
     for (final controller in _textControllers.values) {
       controller.dispose();
     }
@@ -447,7 +613,10 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
       focusNode.dispose();
     }
 
-    _scrollController.dispose();
     super.dispose();
   }
+}
+
+extension _FirstOrNullExtension<T> on List<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
