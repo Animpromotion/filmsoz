@@ -12,6 +12,8 @@ class EditorToolbar extends StatelessWidget {
     required this.onOpenRecentProject,
     required this.onSave,
     required this.onSaveAs,
+    required this.onImportFountain,
+    required this.onExportFountain,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -28,6 +30,8 @@ class EditorToolbar extends StatelessWidget {
   final ValueChanged<String> onOpenRecentProject;
   final VoidCallback onSave;
   final VoidCallback onSaveAs;
+  final VoidCallback onImportFountain;
+  final VoidCallback onExportFountain;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -48,7 +52,7 @@ class EditorToolbar extends StatelessWidget {
           _buildMenuButton('Вид'),
           _buildMenuButton('Формат'),
           _buildMenuButton('AI'),
-          _buildMenuButton('Экспорт'),
+          _buildExportMenu(),
           const SizedBox(width: 6),
           const VerticalDivider(
             width: 1,
@@ -156,6 +160,10 @@ class EditorToolbar extends StatelessWidget {
             onOpenProject();
             break;
 
+          case _FileMenuAction.importFountain:
+            onImportFountain();
+            break;
+
           case _FileMenuAction.saveProject:
             onSave();
             break;
@@ -193,6 +201,16 @@ class EditorToolbar extends StatelessWidget {
               icon: Icons.folder_open_outlined,
               label: 'Открыть...',
               shortcut: 'Ctrl+O',
+            ),
+          ),
+          const PopupMenuItem<_FileMenuSelection>(
+            value: _FileMenuSelection(
+              _FileMenuAction.importFountain,
+            ),
+            child: _MenuRow(
+              icon: Icons.file_download_outlined,
+              label: 'Импорт Fountain...',
+              shortcut: 'Ctrl+Alt+O',
             ),
           ),
           const PopupMenuDivider(),
@@ -294,6 +312,45 @@ class EditorToolbar extends StatelessWidget {
     );
   }
 
+  Widget _buildExportMenu() {
+    return PopupMenuButton<_ExportMenuAction>(
+      tooltip: 'Экспорт',
+      color: const Color(0xFF303033),
+      onSelected: (action) {
+        switch (action) {
+          case _ExportMenuAction.fountain:
+            onExportFountain();
+            break;
+        }
+      },
+      itemBuilder: (context) {
+        return const <PopupMenuEntry<_ExportMenuAction>>[
+          PopupMenuItem<_ExportMenuAction>(
+            value: _ExportMenuAction.fountain,
+            child: _MenuRow(
+              icon: Icons.file_upload_outlined,
+              label: 'Экспорт в Fountain...',
+              shortcut: 'Ctrl+Alt+E',
+            ),
+          ),
+        ];
+      },
+      child: const Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 9,
+        ),
+        child: Text(
+          'Экспорт',
+          style: TextStyle(
+            color: Color(0xFFCCCCCC),
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildHistoryButton({
     required IconData icon,
     required String tooltip,
@@ -342,10 +399,13 @@ class EditorToolbar extends StatelessWidget {
 enum _FileMenuAction {
   newProject,
   openProject,
+  importFountain,
   saveProject,
   saveAsProject,
   openRecentProject,
 }
+
+enum _ExportMenuAction { fountain }
 
 class _FileMenuSelection {
   const _FileMenuSelection(this.action) : recentPath = null;

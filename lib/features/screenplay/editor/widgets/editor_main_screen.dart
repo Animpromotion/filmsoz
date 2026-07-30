@@ -9,6 +9,7 @@ import 'package:filmsoz_studio/features/screenplay/editor/controller/screenplay_
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_block_widget.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sheet.dart';
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
+import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/project_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/toolbar/editor_toolbar.dart';
 
@@ -23,6 +24,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     with WidgetsBindingObserver {
   late final ScreenplayEditorController _controller;
   final ProjectFileService _projectFileService = const ProjectFileService();
+  final FountainFileService _fountainFileService = const FountainFileService();
 
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollAreaKey = GlobalKey();
@@ -187,6 +189,17 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     final block = _controller.document.blocks[blockIndex];
     final key = event.logicalKey;
     final isControlPressed = HardwareKeyboard.instance.isControlPressed;
+    final isAltPressed = HardwareKeyboard.instance.isAltPressed;
+
+    if (isControlPressed && isAltPressed && key == LogicalKeyboardKey.keyO) {
+      unawaited(_importFountain());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed && isAltPressed && key == LogicalKeyboardKey.keyE) {
+      unawaited(_exportFountain());
+      return KeyEventResult.handled;
+    }
 
     if (isControlPressed && key == LogicalKeyboardKey.keyZ) {
       if (HardwareKeyboard.instance.isShiftPressed) {
@@ -547,6 +560,74 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     return saved;
   }
 
+  Future<void> _importFountain() async {
+    final canContinue = await _confirmDiscardChanges(
+      actionName: 'импортом сценария Fountain',
+    );
+
+    if (!canContinue || !mounted) {
+      return;
+    }
+
+    final selectedPath = await _fountainFileService.chooseImportFile();
+
+    if (selectedPath == null || !mounted) {
+      return;
+    }
+
+    try {
+      final result = await _fountainFileService.importFromPath(selectedPath);
+
+      if (!mounted) {
+        return;
+      }
+
+      _prepareDocumentReplacement();
+      _controller.replaceWithImportedDocument(
+        result.document,
+        sourceName: result.suggestedProjectName,
+      );
+      _finishDocumentReplacement();
+
+      _showOperationMessage(
+        'Fountain импортирован: ${result.suggestedProjectName}',
+      );
+    } catch (error) {
+      await _showOperationError(
+        title: 'Ошибка импорта Fountain',
+        message: 'Не удалось импортировать файл:\n$error',
+      );
+    }
+  }
+
+  Future<void> _exportFountain() async {
+    final selectedPath = await _fountainFileService.chooseExportFile(
+      suggestedName: _controller.projectName,
+    );
+
+    if (selectedPath == null || !mounted) {
+      return;
+    }
+
+    try {
+      final exportedPath = await _fountainFileService.exportToPath(
+        _controller.document,
+        selectedPath,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      _showOperationMessage('Fountain экспортирован: $exportedPath');
+    } catch (error) {
+      await _showOperationError(
+        title: 'Ошибка экспорта Fountain',
+        message: 'Не удалось экспортировать сценарий:\n$error',
+      );
+    }
+  }
+
   Future<bool> _confirmDiscardChanges({
     required String actionName,
   }) async {
@@ -625,6 +706,47 @@ class _EditorMainScreenState extends State<EditorMainScreen>
         return AlertDialog(
           title: const Text('Filmsoz Studio'),
           content: Text(_controller.lastError ?? fallbackMessage),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Понятно'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showOperationMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+  }
+
+  Future<void> _showOperationError({
+    required String title,
+    required String message,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: SelectableText(message),
           actions: [
             FilledButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -957,6 +1079,16 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(
+          LogicalKeyboardKey.keyO,
+          control: true,
+          alt: true,
+        ): () => unawaited(_importFountain()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyE,
+          control: true,
+          alt: true,
+        ): () => unawaited(_exportFountain()),
+        const SingleActivator(
           LogicalKeyboardKey.keyN,
           control: true,
         ): () => unawaited(_newProject()),
@@ -1003,6 +1135,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   },
                   onSave: () => unawaited(_saveProject()),
                   onSaveAs: () => unawaited(_saveProjectAs()),
+                  onImportFountain: () => unawaited(_importFountain()),
+                  onExportFountain: () => unawaited(_exportFountain()),
                   onUndo: _undo,
                   onRedo: _redo,
                   isSaving: _controller.isSaving,

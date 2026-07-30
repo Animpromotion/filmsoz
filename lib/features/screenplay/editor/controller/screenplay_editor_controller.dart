@@ -218,6 +218,28 @@ class ScreenplayEditorController extends ChangeNotifier {
     _scheduleDebouncedSave(delay: const Duration(milliseconds: 100));
   }
 
+  void replaceWithImportedDocument(
+    FilmDocument document, {
+    String? sourceName,
+  }) {
+    _finishTypingGroup();
+
+    _document = _cloneDocument(document);
+    _projectPath = null;
+    _projectName = sourceName?.trim().isNotEmpty == true
+        ? sourceName!.trim()
+        : 'Импортированный сценарий';
+    _storagePath = null;
+    _lastProjectSavedAt = null;
+    _lastError = null;
+    _isDirty = true;
+    _hasPendingAutosave = true;
+    _revision++;
+    _clearHistory();
+    _notifySafely();
+    _scheduleDebouncedSave(delay: const Duration(milliseconds: 100));
+  }
+
   Future<bool> openProjectFromPath(String filePath) async {
     await _waitForActiveSave();
 
