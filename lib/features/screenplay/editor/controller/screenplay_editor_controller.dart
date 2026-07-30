@@ -38,6 +38,18 @@ class BlockInsertionResult {
   final String focusBlockId;
 }
 
+class BlockMoveResult {
+  const BlockMoveResult({
+    required this.movedBlockIds,
+    required this.focusBlockId,
+    required this.firstIndex,
+  });
+
+  final List<String> movedBlockIds;
+  final String focusBlockId;
+  final int firstIndex;
+}
+
 class ScreenplayEditorController extends ChangeNotifier {
   ScreenplayEditorController({LocalStorageService? storageService})
       : _storageService = storageService ?? LocalStorageService();
@@ -320,6 +332,160 @@ class ScreenplayEditorController extends ChangeNotifier {
           insertedBlocks.map((block) => block.id).toList(growable: false),
       focusBlockId: insertedBlocks.first.id,
     );
+  }
+
+  BlockMoveResult? moveBlocksByOffset({
+    required Iterable<String> blockIds,
+    required int offset,
+    String? focusBlockId,
+  }) {
+    final requestedIds = blockIds.toSet();
+    final selectedIds = _document.blocks
+        .where((block) => requestedIds.contains(block.id))
+        .map((block) => block.id)
+        .toSet();
+
+    if (selectedIds.isEmpty || offset == 0) {
+      return null;
+    }
+
+    final nextBlocks = List<FilmBlock>.of(_document.blocks);
+    var changed = false;
+
+    if (offset < 0) {
+      for (var index = 1; index < nextBlocks.length; index++) {
+        final currentIsSelected = selectedIds.contains(nextBlocks[index].id);
+        final previousIsSelected =
+            selectedIds.contains(nextBlocks[index - 1].id);
+
+        if (currentIsSelected && !previousIsSelected) {
+          final previousBlock = nextBlocks[index - 1];
+          nextBlocks[index - 1] = nextBlocks[index];
+          nextBlocks[index] = previousBlock;
+          changed = true;
+        }
+      }
+    } else {
+      for (var index = nextBlocks.length - 2; index >= 0; index--) {
+        final currentIsSelected = selectedIds.contains(nextBlocks[index].id);
+        final nextIsSelected = selectedIds.contains(nextBlocks[index + 1].id);
+
+        if (currentIsSelected && !nextIsSelected) {
+          final nextBlock = nextBlocks[index + 1];
+          nextBlocks[index + 1] = nextBlocks[index];
+          nextBlocks[index] = nextBlock;
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed) {
+      return null;
+    }
+
+    return _applyMovedBlockOrder(
+      nextBlocks: nextBlocks,
+      movedIds: selectedIds,
+      focusBlockId: focusBlockId,
+    );
+  }
+
+  BlockMoveResult? moveBlocksRelativeToTarget({
+    required Iterable<String> blockIds,
+    required String targetBlockId,
+    required bool placeAfter,
+    String? focusBlockId,
+  }) {
+    final requestedIds = blockIds.toSet();
+    final selectedIds = _document.blocks
+        .where((block) => requestedIds.contains(block.id))
+        .map((block) => block.id)
+        .toSet();
+
+    if (selectedIds.isEmpty || selectedIds.contains(targetBlockId)) {
+      return null;
+    }
+
+    final movedBlocks = _document.blocks
+        .where((block) => selectedIds.contains(block.id))
+        .toList(growable: false);
+
+    if (movedBlocks.isEmpty) {
+      return null;
+    }
+
+    final remainingBlocks = _document.blocks
+        .where((block) => !selectedIds.contains(block.id))
+        .toList(growable: true);
+    final targetIndex = remainingBlocks.indexWhere(
+      (block) => block.id == targetBlockId,
+    );
+
+    if (targetIndex == -1) {
+      return null;
+    }
+
+    final insertionIndex = targetIndex + (placeAfter ? 1 : 0);
+    remainingBlocks.insertAll(insertionIndex, movedBlocks);
+
+    final currentOrder = _document.blocks.map((block) => block.id).toList();
+    final nextOrder = remainingBlocks.map((block) => block.id).toList();
+
+    if (_sameBlockOrder(currentOrder, nextOrder)) {
+      return null;
+    }
+
+    return _applyMovedBlockOrder(
+      nextBlocks: remainingBlocks,
+      movedIds: selectedIds,
+      focusBlockId: focusBlockId,
+    );
+  }
+
+  BlockMoveResult _applyMovedBlockOrder({
+    required List<FilmBlock> nextBlocks,
+    required Set<String> movedIds,
+    String? focusBlockId,
+  }) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    _document.blocks
+      ..clear()
+      ..addAll(nextBlocks);
+
+    final movedBlockIds = nextBlocks
+        .where((block) => movedIds.contains(block.id))
+        .map((block) => block.id)
+        .toList(growable: false);
+    final safeFocusBlockId =
+        focusBlockId != null && movedIds.contains(focusBlockId)
+            ? focusBlockId
+            : movedBlockIds.first;
+
+    _markDocumentChanged();
+
+    return BlockMoveResult(
+      movedBlockIds: movedBlockIds,
+      focusBlockId: safeFocusBlockId,
+      firstIndex: nextBlocks.indexWhere(
+        (block) => movedIds.contains(block.id),
+      ),
+    );
+  }
+
+  bool _sameBlockOrder(List<String> first, List<String> second) {
+    if (first.length != second.length) {
+      return false;
+    }
+
+    for (var index = 0; index < first.length; index++) {
+      if (first[index] != second[index]) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   BlockMergeResult? mergeBlockWithPrevious(String id) {

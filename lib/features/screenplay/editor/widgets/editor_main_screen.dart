@@ -41,6 +41,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   final Set<String> _selectedBlockIds = <String>{};
 
   List<FilmBlock> _blockClipboard = const <FilmBlock>[];
+  String? _draggingBlockId;
+  String? _dragHoverTargetId;
+  bool _dragInsertAfter = false;
+  Timer? _dragAutoScrollTimer;
+  Offset? _lastDragGlobalPosition;
   String? _selectionAnchorId;
   bool _isSplittingBlock = false;
   bool _scrollUpdateScheduled = false;
@@ -212,6 +217,18 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     final isAltPressed = HardwareKeyboard.instance.isAltPressed;
     final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
     final hasBlockSelection = _selectedBlockIds.isNotEmpty;
+
+    if (!isControlPressed &&
+        isAltPressed &&
+        !isShiftPressed &&
+        (key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown)) {
+      _moveBlocksByOffset(
+        activeBlockId: block.id,
+        offset: key == LogicalKeyboardKey.arrowUp ? -1 : 1,
+      );
+      return KeyEventResult.handled;
+    }
 
     if (!isControlPressed &&
         !isAltPressed &&
@@ -622,39 +639,384 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     });
   }
 
+  void _moveFocusedOrSelectedBlocks(int offset) {
+    final selectedIds = _selectedIdsInDocumentOrder();
+    final activeBlockId =
+        _focusedBlockId() ?? (selectedIds.isEmpty ? null : selectedIds.first);
+
+    if (activeBlockId == null) {
+      return;
+    }
+
+    _moveBlocksByOffset(
+      activeBlockId: activeBlockId,
+      offset: offset,
+    );
+  }
+
+  void _moveBlocksByOffset({
+    required String activeBlockId,
+    required int offset,
+  }) {
+    final selectedIds = _selectedIdsInDocumentOrder();
+    final movedIds =
+        selectedIds.isEmpty ? <String>[activeBlockId] : selectedIds;
+    final result = _controller.moveBlocksByOffset(
+      blockIds: movedIds,
+      offset: offset,
+      focusBlockId: activeBlockId,
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _revealBlock(result.focusBlockId);
+    });
+  }
+
+  List<String> _draggedBlockIds(String draggedBlockId) {
+    if (_selectedBlockIds.contains(draggedBlockId)) {
+      return _selectedIdsInDocumentOrder();
+    }
+
+    return <String>[draggedBlockId];
+  }
+
+  void _beginBlockDrag(String blockId) {
+    _stopDragAutoScroll();
+
+    setState(() {
+      if (!_selectedBlockIds.contains(blockId)) {
+        _selectedBlockIds
+          ..clear()
+          ..add(blockId);
+        _selectionAnchorId = blockId;
+      }
+
+      _draggingBlockId = blockId;
+      _dragHoverTargetId = null;
+      _dragInsertAfter = false;
+    });
+  }
+
+  void _finishBlockDrag() {
+    _stopDragAutoScroll();
+
+    if (!mounted || (_draggingBlockId == null && _dragHoverTargetId == null)) {
+      return;
+    }
+
+    setState(() {
+      _draggingBlockId = null;
+      _dragHoverTargetId = null;
+      _dragInsertAfter = false;
+    });
+  }
+
+  void _stopDragAutoScroll() {
+    _dragAutoScrollTimer?.cancel();
+    _dragAutoScrollTimer = null;
+    _lastDragGlobalPosition = null;
+  }
+
+  void _updateBlockDragHover(
+    String targetBlockId,
+    Offset globalPosition,
+  ) {
+    final blockContext = _blockKeys[targetBlockId]?.currentContext;
+    final renderObject = blockContext?.findRenderObject();
+
+    if (renderObject is! RenderBox) {
+      return;
+    }
+
+    final localPosition = renderObject.globalToLocal(globalPosition);
+    final insertAfter = localPosition.dy > renderObject.size.height / 2;
+
+    if (_dragHoverTargetId != targetBlockId ||
+        _dragInsertAfter != insertAfter) {
+      setState(() {
+        _dragHoverTargetId = targetBlockId;
+        _dragInsertAfter = insertAfter;
+      });
+    }
+
+    _lastDragGlobalPosition = globalPosition;
+    _dragAutoScrollTimer ??= Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) {
+        final dragPosition = _lastDragGlobalPosition;
+
+        if (dragPosition != null) {
+          _autoScrollDuringDrag(dragPosition);
+        }
+      },
+    );
+    _autoScrollDuringDrag(globalPosition);
+  }
+
+  void _acceptBlockDrop(
+    String draggedBlockId,
+    String targetBlockId,
+  ) {
+    final movedIds = _draggedBlockIds(draggedBlockId);
+    final result = _controller.moveBlocksRelativeToTarget(
+      blockIds: movedIds,
+      targetBlockId: targetBlockId,
+      placeAfter: _dragInsertAfter,
+      focusBlockId: draggedBlockId,
+    );
+
+    if (result == null) {
+      _finishBlockDrag();
+      return;
+    }
+
+    _stopDragAutoScroll();
+
+    setState(() {
+      _selectedBlockIds
+        ..clear()
+        ..addAll(result.movedBlockIds);
+      _selectionAnchorId = result.focusBlockId;
+      _draggingBlockId = null;
+      _dragHoverTargetId = null;
+      _dragInsertAfter = false;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _revealBlock(result.focusBlockId);
+    });
+  }
+
+  void _autoScrollDuringDrag(Offset globalPosition) {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+
+    final scrollContext = _scrollAreaKey.currentContext;
+    final renderObject = scrollContext?.findRenderObject();
+
+    if (renderObject is! RenderBox) {
+      return;
+    }
+
+    final localPosition = renderObject.globalToLocal(globalPosition);
+    const edgeSize = 84.0;
+    const maximumStep = 24.0;
+    var scrollStep = 0.0;
+
+    if (localPosition.dy < edgeSize) {
+      final factor = ((edgeSize - localPosition.dy) / edgeSize).clamp(0.0, 1.0);
+      scrollStep = -maximumStep * factor;
+    } else if (localPosition.dy > renderObject.size.height - edgeSize) {
+      final factor =
+          ((localPosition.dy - (renderObject.size.height - edgeSize)) /
+                  edgeSize)
+              .clamp(0.0, 1.0);
+      scrollStep = maximumStep * factor;
+    }
+
+    if (scrollStep == 0) {
+      return;
+    }
+
+    final position = _scrollController.position;
+    final nextOffset = (_scrollController.offset + scrollStep)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+
+    if (nextOffset != _scrollController.offset) {
+      _scrollController.jumpTo(nextOffset);
+    }
+  }
+
+  void _revealBlock(String blockId) {
+    final blockContext = _blockKeys[blockId]?.currentContext;
+
+    if (blockContext == null) {
+      return;
+    }
+
+    unawaited(
+      Scrollable.ensureVisible(
+        blockContext,
+        alignment: 0.22,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
+  Widget _buildDragHandle(FilmBlock block) {
+    final selectedCount =
+        _selectedBlockIds.contains(block.id) ? _selectedBlockIds.length : 1;
+
+    return Draggable<String>(
+      data: block.id,
+      axis: Axis.vertical,
+      maxSimultaneousDrags: 1,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      onDragStarted: () => _beginBlockDrag(block.id),
+      onDragEnd: (_) => _finishBlockDrag(),
+      feedback: Material(
+        color: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2B2B2E),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFE5A93C)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x55000000),
+                blurRadius: 12,
+                offset: Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Text(
+            selectedCount == 1 ? 'Перемещение блока' : '$selectedCount блоков',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+      childWhenDragging: const Opacity(
+        opacity: 0.28,
+        child: Icon(
+          Icons.drag_indicator,
+          size: 18,
+          color: Color(0xFF8D8D99),
+        ),
+      ),
+      child: const MouseRegion(
+        cursor: SystemMouseCursors.grab,
+        child: Tooltip(
+          message: 'Перетащить блок или выбранную группу',
+          child: Padding(
+            padding: EdgeInsets.only(top: 8, right: 4),
+            child: Icon(
+              Icons.drag_indicator,
+              size: 18,
+              color: Color(0xFF8D8D99),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSelectableBlock(FilmBlock block) {
     final isSelected = _selectedBlockIds.contains(block.id);
+    final isDropTarget = _dragHoverTargetId == block.id;
+    final draggedIds = _draggingBlockId == null
+        ? const <String>[]
+        : _draggedBlockIds(_draggingBlockId!);
+    final canAcceptDrop = !draggedIds.contains(block.id);
 
     return KeyedSubtree(
       key: _blockKeys[block.id],
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) => _handleBlockPointerDown(block.id),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0x16E5A93C) : Colors.transparent,
-            border: Border(
-              left: BorderSide(
-                color:
-                    isSelected ? const Color(0xFFE5A93C) : Colors.transparent,
-                width: 3,
+      child: DragTarget<String>(
+        onWillAcceptWithDetails: (details) {
+          return !_draggedBlockIds(details.data).contains(block.id);
+        },
+        onMove: (details) {
+          _updateBlockDragHover(block.id, details.offset);
+        },
+        onLeave: (_) {
+          if (_dragHoverTargetId == block.id && mounted) {
+            setState(() {
+              _dragHoverTargetId = null;
+              _dragInsertAfter = false;
+            });
+          }
+        },
+        onAcceptWithDetails: (details) {
+          _acceptBlockDrop(details.data, block.id);
+        },
+        builder: (context, candidateData, rejectedData) {
+          final showDropLine =
+              isDropTarget && canAcceptDrop && candidateData.isNotEmpty;
+
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 90),
+            curve: Curves.easeOutCubic,
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                  color: showDropLine && !_dragInsertAfter
+                      ? const Color(0xFFE5A93C)
+                      : Colors.transparent,
+                  width: 3,
+                ),
+                bottom: BorderSide(
+                  color: showDropLine && _dragInsertAfter
+                      ? const Color(0xFFE5A93C)
+                      : Colors.transparent,
+                  width: 3,
+                ),
               ),
             ),
-          ),
-          child: ScriptBlockWidget(
-            block: block,
-            textController: _textControllers[block.id]!,
-            focusNode: _focusNodes[block.id]!,
-            onChanged: (text) => _handleTextChanged(
-              block.id,
-              text,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: _buildDragHandle(block),
+                ),
+                Expanded(
+                  child: Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: (_) => _handleBlockPointerDown(block.id),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      curve: Curves.easeOutCubic,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? const Color(0x16E5A93C)
+                            : Colors.transparent,
+                        border: Border(
+                          left: BorderSide(
+                            color: isSelected
+                                ? const Color(0xFFE5A93C)
+                                : Colors.transparent,
+                            width: 3,
+                          ),
+                        ),
+                      ),
+                      child: ScriptBlockWidget(
+                        block: block,
+                        textController: _textControllers[block.id]!,
+                        focusNode: _focusNodes[block.id]!,
+                        onChanged: (text) => _handleTextChanged(
+                          block.id,
+                          text,
+                        ),
+                        nextBlockHint:
+                            _editingFlowService.nextBlockHint(block.type),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-            nextBlockHint: _editingFlowService.nextBlockHint(block.type),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -683,7 +1045,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           const SizedBox(width: 18),
           const Expanded(
             child: Text(
-              'Ctrl+клик — выбрать блок  •  Shift+клик — диапазон',
+              'Alt+↑/↓ — переместить  •  Перетаскивание — изменить место',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -691,6 +1053,16 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                 fontSize: 11,
               ),
             ),
+          ),
+          IconButton(
+            tooltip: 'Переместить выше (Alt+↑)',
+            onPressed: () => _moveFocusedOrSelectedBlocks(-1),
+            icon: const Icon(Icons.arrow_upward, size: 17),
+          ),
+          IconButton(
+            tooltip: 'Переместить ниже (Alt+↓)',
+            onPressed: () => _moveFocusedOrSelectedBlocks(1),
+            icon: const Icon(Icons.arrow_downward, size: 17),
           ),
           TextButton.icon(
             onPressed: () => unawaited(_copySelectedBlocks()),
@@ -1323,8 +1695,12 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
   void _prepareDocumentReplacement() {
     FocusManager.instance.primaryFocus?.unfocus();
+    _stopDragAutoScroll();
     _selectedBlockIds.clear();
     _selectionAnchorId = null;
+    _draggingBlockId = null;
+    _dragHoverTargetId = null;
+    _dragInsertAfter = false;
     _initialFocusPlaced = false;
     _activeSceneId = null;
     _forceTextSync = true;
@@ -1350,8 +1726,12 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
   void _performHistoryAction(bool Function() action) {
     final hadBlockSelection = _selectedBlockIds.isNotEmpty;
+    _stopDragAutoScroll();
     _selectedBlockIds.clear();
     _selectionAnchorId = null;
+    _draggingBlockId = null;
+    _dragHoverTargetId = null;
+    _dragInsertAfter = false;
 
     final focusedBlockId = _focusedBlockId();
     final previousBlocks = _controller.document.blocks;
@@ -1711,6 +2091,14 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           LogicalKeyboardKey.keyY,
           control: true,
         ): _redo,
+        const SingleActivator(
+          LogicalKeyboardKey.arrowUp,
+          alt: true,
+        ): () => _moveFocusedOrSelectedBlocks(-1),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowDown,
+          alt: true,
+        ): () => _moveFocusedOrSelectedBlocks(1),
         if (_selectedBlockIds.isNotEmpty)
           const SingleActivator(
             LogicalKeyboardKey.keyC,
@@ -1778,7 +2166,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                       Expanded(
                         child: Column(
                           children: [
-                            if (_selectedBlockIds.isNotEmpty)
+                            if (_selectedBlockIds.isNotEmpty &&
+                                _draggingBlockId == null)
                               _buildBlockSelectionToolbar(),
                             Expanded(
                               child: ColoredBox(
@@ -1894,6 +2283,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _stopDragAutoScroll();
 
     _controller
       ..removeListener(_onDocumentChanged)
