@@ -7,22 +7,26 @@ class SceneNavigator extends StatefulWidget {
     required this.scenes,
     required this.selectedSceneId,
     required this.collapsedSceneIds,
+    required this.sceneNotes,
     required this.onSceneSelected,
     required this.onToggleSceneCollapsed,
     required this.onMoveScene,
     required this.onDuplicateScene,
     required this.onDeleteScene,
+    required this.onEditSceneNote,
     required this.onSceneDropped,
   });
 
   final List<SceneSection> scenes;
   final String? selectedSceneId;
   final Set<String> collapsedSceneIds;
+  final Map<String, String> sceneNotes;
   final ValueChanged<SceneSection> onSceneSelected;
   final ValueChanged<String> onToggleSceneCollapsed;
   final void Function(String sceneId, int offset) onMoveScene;
   final ValueChanged<String> onDuplicateScene;
   final ValueChanged<String> onDeleteScene;
+  final ValueChanged<String> onEditSceneNote;
   final void Function(
     String sceneId,
     String targetSceneId,
@@ -130,6 +134,10 @@ class _SceneNavigatorState extends State<SceneNavigator> {
                             scene: scene,
                             isSelected: isSelected,
                             isCollapsed: isCollapsed,
+                            hasNote: widget.sceneNotes[scene.id]
+                                    ?.trim()
+                                    .isNotEmpty ==
+                                true,
                             canMoveUp: originalIndex > 0,
                             canMoveDown: originalIndex >= 0 &&
                                 originalIndex < widget.scenes.length - 1,
@@ -144,6 +152,9 @@ class _SceneNavigatorState extends State<SceneNavigator> {
                             },
                             onDelete: () {
                               widget.onDeleteScene(scene.id);
+                            },
+                            onEditNote: () {
+                              widget.onEditSceneNote(scene.id);
                             },
                           ),
                         );
@@ -340,6 +351,7 @@ class _SceneItem extends StatelessWidget {
     required this.scene,
     required this.isSelected,
     required this.isCollapsed,
+    required this.hasNote,
     required this.canMoveUp,
     required this.canMoveDown,
     required this.onTap,
@@ -348,11 +360,13 @@ class _SceneItem extends StatelessWidget {
     required this.onMoveDown,
     required this.onDuplicate,
     required this.onDelete,
+    required this.onEditNote,
   });
 
   final SceneSection scene;
   final bool isSelected;
   final bool isCollapsed;
+  final bool hasNote;
   final bool canMoveUp;
   final bool canMoveDown;
   final VoidCallback onTap;
@@ -361,6 +375,7 @@ class _SceneItem extends StatelessWidget {
   final VoidCallback onMoveDown;
   final VoidCallback onDuplicate;
   final VoidCallback onDelete;
+  final VoidCallback onEditNote;
 
   @override
   Widget build(BuildContext context) {
@@ -472,16 +487,31 @@ class _SceneItem extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 5),
-                      Text(
-                        '${scene.blockCount} блоков • '
-                        '${scene.wordCount} слов • '
-                        '${scene.characterCount} симв.',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF85858B),
-                          fontSize: 10,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '${scene.blockCount} блоков • '
+                              '${scene.wordCount} слов • '
+                              '${scene.characterCount} симв.',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF85858B),
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                          if (hasNote)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 5),
+                              child: Icon(
+                                Icons.sticky_note_2,
+                                size: 13,
+                                color: Color(0xFFE5A93C),
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),
@@ -517,6 +547,9 @@ class _SceneItem extends StatelessWidget {
                       case _SceneMenuAction.duplicate:
                         onDuplicate();
                         break;
+                      case _SceneMenuAction.note:
+                        onEditNote();
+                        break;
                       case _SceneMenuAction.delete:
                         onDelete();
                         break;
@@ -545,6 +578,15 @@ class _SceneItem extends StatelessWidget {
                       child: _SceneMenuLabel(
                         icon: Icons.copy_all_outlined,
                         text: 'Дублировать сцену',
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _SceneMenuAction.note,
+                      child: _SceneMenuLabel(
+                        icon: hasNote
+                            ? Icons.sticky_note_2
+                            : Icons.sticky_note_2_outlined,
+                        text: hasNote ? 'Изменить заметку' : 'Добавить заметку',
                       ),
                     ),
                     const PopupMenuItem(
@@ -617,4 +659,4 @@ class _EmptySceneList extends StatelessWidget {
   }
 }
 
-enum _SceneMenuAction { moveUp, moveDown, duplicate, delete }
+enum _SceneMenuAction { moveUp, moveDown, duplicate, note, delete }

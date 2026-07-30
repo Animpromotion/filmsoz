@@ -12,6 +12,8 @@ import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sh
 import 'package:filmsoz_studio/features/screenplay/formatting/screenplay_editing_flow_service.dart';
 import 'package:filmsoz_studio/features/screenplay/formatting/smart_formatting_service.dart';
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
+import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_service.dart';
+import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_toolbar.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/project_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/toolbar/editor_toolbar.dart';
@@ -32,6 +34,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       const SmartFormattingService();
   final ScreenplayEditingFlowService _editingFlowService =
       const ScreenplayEditingFlowService();
+  final ScreenplayProductivityService _productivityService =
+      const ScreenplayProductivityService();
 
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollAreaKey = GlobalKey();
@@ -200,6 +204,77 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     }
   }
 
+  List<String> _suggestionsForBlock(FilmBlock block) {
+    final focusNode = _focusNodes[block.id];
+
+    if (focusNode?.hasFocus != true) {
+      return const <String>[];
+    }
+
+    final currentText = _textControllers[block.id]?.text ?? block.text;
+
+    switch (block.type) {
+      case BlockType.character:
+        return _productivityService.characterSuggestions(
+          _controller.document,
+          query: currentText,
+          excludeBlockId: block.id,
+        );
+      case BlockType.sceneHeading:
+        return _productivityService.locationSuggestions(
+          _controller.document,
+          query: _productivityService.locationQuery(currentText),
+          excludeBlockId: block.id,
+        );
+      case BlockType.action:
+      case BlockType.dialogue:
+      case BlockType.parenthetical:
+      case BlockType.transition:
+        return const <String>[];
+    }
+  }
+
+  void _applySuggestion(FilmBlock block, String suggestion) {
+    final textController = _textControllers[block.id];
+
+    if (textController == null) {
+      return;
+    }
+
+    final nextText = switch (block.type) {
+      BlockType.character =>
+        _productivityService.normalizeCharacterName(suggestion),
+      BlockType.sceneHeading => _productivityService.applyLocationSuggestion(
+          textController.text,
+          suggestion,
+        ),
+      BlockType.action => textController.text,
+      BlockType.dialogue => textController.text,
+      BlockType.parenthetical => textController.text,
+      BlockType.transition => textController.text,
+    };
+
+    if (nextText == textController.text) {
+      return;
+    }
+
+    textController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    _controller.updateBlockContent(
+      block.id,
+      text: nextText,
+      inferredType: block.type,
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _focusBlockAtOffset(block.id, nextText.length);
+      }
+    });
+  }
+
   KeyEventResult _handleBlockKey(
     String blockId,
     KeyEvent event,
@@ -222,6 +297,55 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     final isAltPressed = HardwareKeyboard.instance.isAltPressed;
     final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
     final hasBlockSelection = _selectedBlockIds.isNotEmpty;
+
+    if (isControlPressed && !isAltPressed && key == LogicalKeyboardKey.space) {
+      final suggestions = _suggestionsForBlock(block);
+
+      if (suggestions.isNotEmpty) {
+        _applySuggestion(block, suggestions.first);
+        return KeyEventResult.handled;
+      }
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.keyD) {
+      _duplicateFocusedOrSelectedBlocks(activeBlockId: block.id);
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.keyF) {
+      unawaited(_showFindReplaceDialog());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.keyG) {
+      unawaited(_showGoToSceneDialog());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        isShiftPressed &&
+        key == LogicalKeyboardKey.keyM) {
+      unawaited(_editSceneNote());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.keyP) {
+      unawaited(_showCharacterStatistics());
+      return KeyEventResult.handled;
+    }
 
     if (!isControlPressed &&
         isAltPressed &&
@@ -1140,6 +1264,10 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                             ),
                             nextBlockHint:
                                 _editingFlowService.nextBlockHint(block.type),
+                            suggestions: _suggestionsForBlock(block),
+                            onSuggestionSelected: (suggestion) {
+                              _applySuggestion(block, suggestion);
+                            },
                           ),
                         ],
                       ),
@@ -1506,6 +1634,469 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
       _focusBlockAtOffset(targetBlock.id, cursorOffset);
     });
+  }
+
+  String? _currentInsertionAnchorId() {
+    final selectedIds = _selectedIdsInDocumentOrder();
+
+    if (selectedIds.isNotEmpty) {
+      return selectedIds.last;
+    }
+
+    return _focusedBlockId() ?? _controller.document.blocks.lastOrNull?.id;
+  }
+
+  void _insertQuickBlock(BlockType type) {
+    final initialText = switch (type) {
+      BlockType.sceneHeading => 'ИНТ. ЛОКАЦИЯ - ДЕНЬ',
+      BlockType.parenthetical => '()',
+      BlockType.action => '',
+      BlockType.character => '',
+      BlockType.dialogue => '',
+      BlockType.transition => '',
+    };
+    final result = _controller.insertBlocksAfter(
+      afterBlockId: _currentInsertionAnchorId(),
+      blocks: <FilmBlock>[
+        FilmBlock(
+          id: 'quick-insert-template',
+          type: type,
+          text: initialText,
+        ),
+      ],
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _selectedBlockIds.clear();
+      _selectionAnchorId = result.focusBlockId;
+    });
+
+    final cursorOffset =
+        type == BlockType.parenthetical ? 1 : initialText.length;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _focusBlockAtOffset(result.focusBlockId, cursorOffset);
+      }
+    });
+  }
+
+  void _duplicateFocusedOrSelectedBlocks({String? activeBlockId}) {
+    final selectedIds = _selectedIdsInDocumentOrder();
+    final fallbackId = activeBlockId ?? _focusedBlockId();
+    final sourceIds = selectedIds.isNotEmpty
+        ? selectedIds
+        : fallbackId == null
+            ? <String>[]
+            : <String>[fallbackId];
+
+    if (sourceIds.isEmpty) {
+      return;
+    }
+
+    final sourceBlocks = _controller.copyBlocksByIds(sourceIds);
+    final result = _controller.insertBlocksAfter(
+      afterBlockId: sourceIds.last,
+      blocks: sourceBlocks,
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _selectedBlockIds
+        ..clear()
+        ..addAll(result.insertedBlockIds);
+      _selectionAnchorId = result.insertedBlockIds.first;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlock(result.focusBlockId, cursorAtEnd: true);
+      _showOperationMessage(
+        result.insertedBlockIds.length == 1
+            ? 'Блок продублирован'
+            : 'Продублировано блоков: ${result.insertedBlockIds.length}',
+      );
+    });
+  }
+
+  Future<void> _showFindReplaceDialog() async {
+    final findController = TextEditingController();
+    final replaceController = TextEditingController();
+    var matchCase = false;
+
+    final request = await showDialog<_FindReplaceRequest>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final matchCount = _productivityService.countMatches(
+              _controller.document,
+              findController.text,
+              matchCase: matchCase,
+            );
+
+            return AlertDialog(
+              title: const Text('Поиск и замена'),
+              content: SizedBox(
+                width: 520,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: findController,
+                      autofocus: true,
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Найти',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: replaceController,
+                      decoration: const InputDecoration(
+                        labelText: 'Заменить на',
+                        prefixIcon: Icon(Icons.find_replace),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: matchCase,
+                      title: const Text('Учитывать регистр'),
+                      onChanged: (value) {
+                        setDialogState(() {
+                          matchCase = value ?? false;
+                        });
+                      },
+                    ),
+                    Text(
+                      findController.text.trim().isEmpty
+                          ? 'Введите текст для поиска.'
+                          : 'Найдено совпадений: $matchCount',
+                      style: TextStyle(
+                        color: matchCount > 0
+                            ? const Color(0xFF80B980)
+                            : const Color(0xFF8D8D99),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Отмена'),
+                ),
+                FilledButton.icon(
+                  onPressed: matchCount == 0
+                      ? null
+                      : () {
+                          Navigator.of(context).pop(
+                            _FindReplaceRequest(
+                              query: findController.text,
+                              replacement: replaceController.text,
+                              matchCase: matchCase,
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.find_replace),
+                  label: Text('Заменить всё ($matchCount)'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    findController.dispose();
+    replaceController.dispose();
+
+    if (request == null || !mounted) {
+      return;
+    }
+
+    _forceTextSync = true;
+    final replaced = _controller.replaceAllText(
+      request.query,
+      request.replacement,
+      matchCase: request.matchCase,
+    );
+    _syncEditors();
+    _forceTextSync = false;
+
+    _showOperationMessage('Заменено совпадений: $replaced');
+  }
+
+  Future<void> _showCharacterStatistics() async {
+    final statistics = _productivityService.characterStatistics(
+      _controller.document,
+    );
+
+    final blockId = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Персонажи (${statistics.length})'),
+          content: SizedBox(
+            width: 560,
+            height: 420,
+            child: statistics.isEmpty
+                ? const Center(
+                    child: Text(
+                      'В сценарии пока нет блоков персонажей.',
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: statistics.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final statistic = statistics[index];
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          child: Text('${index + 1}'),
+                        ),
+                        title: Text(
+                          statistic.name,
+                          style: const TextStyle(
+                            fontFamily: 'Courier New',
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Появлений: ${statistic.characterBlocks}  •  '
+                          'Реплик: ${statistic.dialogueBlocks}  •  '
+                          'Слов: ${statistic.dialogueWords}',
+                        ),
+                        trailing: const Icon(Icons.arrow_forward),
+                        onTap: () {
+                          Navigator.of(context).pop(statistic.firstBlockId);
+                        },
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Закрыть'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (blockId == null || !mounted) {
+      return;
+    }
+
+    final scene = _findSceneForBlock(blockId);
+
+    if (scene != null && _collapsedSceneIds.contains(scene.id)) {
+      setState(() {
+        _collapsedSceneIds.remove(scene.id);
+      });
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _revealBlock(blockId);
+      _focusBlock(blockId, cursorAtEnd: true);
+    });
+  }
+
+  Future<void> _showGoToSceneDialog() async {
+    final scenes = _controller.document.sceneSections;
+    final searchController = TextEditingController();
+    var query = '';
+
+    final sceneId = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final filtered = scenes
+                .where((scene) => scene.matchesQuery(query))
+                .toList(growable: false);
+
+            return AlertDialog(
+              title: const Text('Перейти к сцене'),
+              content: SizedBox(
+                width: 600,
+                height: 460,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: searchController,
+                      autofocus: true,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          query = value;
+                        });
+                      },
+                      decoration: const InputDecoration(
+                        hintText: 'Номер, локация или текст сцены...',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? const Center(child: Text('Сцены не найдены.'))
+                          : ListView.builder(
+                              itemCount: filtered.length,
+                              itemBuilder: (context, index) {
+                                final scene = filtered[index];
+
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    child: Text('${scene.number}'),
+                                  ),
+                                  title: Text(
+                                    scene.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontFamily: 'Courier New',
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${scene.blockCount} блоков • '
+                                    '${scene.wordCount} слов',
+                                  ),
+                                  onTap: () {
+                                    Navigator.of(context).pop(scene.id);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Отмена'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    searchController.dispose();
+
+    if (sceneId == null || !mounted) {
+      return;
+    }
+
+    final scene = _controller.document.sceneById(sceneId);
+
+    if (scene != null) {
+      await _selectScene(scene);
+    }
+  }
+
+  Future<void> _editSceneNote([String? sceneId]) async {
+    final resolvedSceneId = sceneId ?? _activeSceneId;
+
+    if (resolvedSceneId == null) {
+      return;
+    }
+
+    final scene = _controller.document.sceneById(resolvedSceneId);
+
+    if (scene == null || !mounted) {
+      return;
+    }
+
+    final noteController = TextEditingController(
+      text: _controller.document.sceneNote(resolvedSceneId),
+    );
+
+    final result = await showDialog<_SceneNoteResult>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Заметка к сцене ${scene.number}'),
+          content: SizedBox(
+            width: 560,
+            child: TextField(
+              controller: noteController,
+              autofocus: true,
+              minLines: 6,
+              maxLines: 14,
+              decoration: InputDecoration(
+                hintText: 'Идеи, реквизит, задачи, режиссёрские замечания...',
+                helperText: scene.title,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Отмена'),
+            ),
+            if (noteController.text.trim().isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop(
+                    const _SceneNoteResult(text: ''),
+                  );
+                },
+                child: const Text('Удалить заметку'),
+              ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  _SceneNoteResult(text: noteController.text),
+                );
+              },
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Сохранить'),
+            ),
+          ],
+        );
+      },
+    );
+
+    noteController.dispose();
+
+    if (result == null || !mounted) {
+      return;
+    }
+
+    final changed = _controller.setSceneNote(
+      resolvedSceneId,
+      result.text,
+    );
+
+    if (changed) {
+      _showOperationMessage(
+        result.text.trim().isEmpty ? 'Заметка удалена' : 'Заметка сохранена',
+      );
+    }
   }
 
   Future<void> _newProject() async {
@@ -2417,6 +3008,28 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           control: true,
         ): () => unawaited(_saveProject()),
         const SingleActivator(
+          LogicalKeyboardKey.keyF,
+          control: true,
+        ): () => unawaited(_showFindReplaceDialog()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyG,
+          control: true,
+        ): () => unawaited(_showGoToSceneDialog()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyD,
+          control: true,
+        ): () => _duplicateFocusedOrSelectedBlocks(),
+        const SingleActivator(
+          LogicalKeyboardKey.keyM,
+          control: true,
+          shift: true,
+        ): () => unawaited(_editSceneNote()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyP,
+          control: true,
+          alt: true,
+        ): () => unawaited(_showCharacterStatistics()),
+        const SingleActivator(
           LogicalKeyboardKey.keyZ,
           control: true,
         ): _undo,
@@ -2492,6 +3105,21 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   canUndo: _controller.canUndo,
                   canRedo: _controller.canRedo,
                 ),
+                ScreenplayProductivityToolbar(
+                  onInsertBlock: _insertQuickBlock,
+                  onDuplicateBlocks: () {
+                    _duplicateFocusedOrSelectedBlocks();
+                  },
+                  onFindReplace: () => unawaited(_showFindReplaceDialog()),
+                  onGoToScene: () => unawaited(_showGoToSceneDialog()),
+                  onShowCharacters: () {
+                    unawaited(_showCharacterStatistics());
+                  },
+                  onEditSceneNote: () => unawaited(_editSceneNote()),
+                  hasActiveScene: activeScene != null,
+                  hasFocusedBlock:
+                      _focusedBlockId() != null || _selectedBlockIds.isNotEmpty,
+                ),
                 Expanded(
                   child: Row(
                     children: [
@@ -2499,12 +3127,16 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                         scenes: scenes,
                         selectedSceneId: _activeSceneId,
                         collapsedSceneIds: _collapsedSceneIds,
+                        sceneNotes: _controller.document.sceneNotes,
                         onSceneSelected: _selectScene,
                         onToggleSceneCollapsed: _toggleSceneCollapsed,
                         onMoveScene: _moveScene,
                         onDuplicateScene: _duplicateScene,
                         onDeleteScene: (sceneId) {
                           unawaited(_deleteScene(sceneId));
+                        },
+                        onEditSceneNote: (sceneId) {
+                          unawaited(_editSceneNote(sceneId));
                         },
                         onSceneDropped: _dropScene,
                       ),
@@ -2660,6 +3292,25 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
 enum _UnsavedChangesChoice { save, discard, cancel }
 
+class _FindReplaceRequest {
+  const _FindReplaceRequest({
+    required this.query,
+    required this.replacement,
+    required this.matchCase,
+  });
+
+  final String query;
+  final String replacement;
+  final bool matchCase;
+}
+
+class _SceneNoteResult {
+  const _SceneNoteResult({required this.text});
+
+  final String text;
+}
+
 extension _FirstOrNullExtension<T> on List<T> {
   T? get firstOrNull => isEmpty ? null : first;
+  T? get lastOrNull => isEmpty ? null : last;
 }

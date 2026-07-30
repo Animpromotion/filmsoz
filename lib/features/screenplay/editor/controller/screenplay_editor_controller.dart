@@ -569,6 +569,13 @@ class ScreenplayEditorController extends ChangeNotifier {
       sourceScene.endIndexExclusive,
       duplicatedBlocks,
     );
+
+    final sourceNote = _document.sceneNote(sceneId);
+
+    if (sourceNote.trim().isNotEmpty) {
+      _document.sceneNotes[duplicatedBlocks.first.id] = sourceNote;
+    }
+
     _markDocumentChanged();
 
     final duplicatedScene = _document.sceneById(duplicatedBlocks.first.id);
@@ -597,6 +604,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       scene.startIndex,
       scene.endIndexExclusive,
     );
+    _document.sceneNotes.remove(sceneId);
 
     if (_document.sceneSections.isEmpty) {
       _document.blocks.add(
@@ -621,6 +629,70 @@ class ScreenplayEditorController extends ChangeNotifier {
       focusBlockId: focusBlock.id,
       activeSceneId: targetScene?.id,
     );
+  }
+
+  bool setSceneNote(String sceneId, String note) {
+    if (_document.sceneById(sceneId) == null) {
+      return false;
+    }
+
+    final normalizedNote = note.trim();
+    final currentNote = _document.sceneNote(sceneId);
+
+    if (currentNote == normalizedNote) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    if (normalizedNote.isEmpty) {
+      _document.sceneNotes.remove(sceneId);
+    } else {
+      _document.sceneNotes[sceneId] = normalizedNote;
+    }
+
+    _markDocumentChanged();
+    return true;
+  }
+
+  int replaceAllText(
+    String query,
+    String replacement, {
+    bool matchCase = false,
+  }) {
+    final normalizedQuery = query.trim();
+
+    if (normalizedQuery.isEmpty) {
+      return 0;
+    }
+
+    final expression = RegExp(
+      RegExp.escape(normalizedQuery),
+      caseSensitive: matchCase,
+    );
+    var matchCount = 0;
+
+    for (final block in _document.blocks) {
+      matchCount += expression.allMatches(block.text).length;
+    }
+
+    if (matchCount == 0) {
+      return 0;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    for (final block in _document.blocks) {
+      block.text = block.text.replaceAllMapped(
+        expression,
+        (_) => replacement,
+      );
+    }
+
+    _markDocumentChanged();
+    return matchCount;
   }
 
   List<List<FilmBlock>> _sceneGroups() {
@@ -1060,16 +1132,29 @@ class ScreenplayEditorController extends ChangeNotifier {
             ),
           )
           .toList(growable: true),
+      sceneNotes: source.sceneNotes,
     );
   }
 
   void _markDocumentChanged() {
+    _removeOrphanedSceneNotes();
     _revision++;
     _isDirty = true;
     _hasPendingAutosave = true;
     _lastError = null;
     _scheduleDebouncedSave();
     _notifySafely();
+  }
+
+  void _removeOrphanedSceneNotes() {
+    final validSceneIds = _document.blocks
+        .where((block) => block.type == BlockType.sceneHeading)
+        .map((block) => block.id)
+        .toSet();
+
+    _document.sceneNotes.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
   }
 
   void _scheduleDebouncedSave({
