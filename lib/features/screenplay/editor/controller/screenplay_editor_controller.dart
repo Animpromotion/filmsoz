@@ -8,6 +8,16 @@ import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
 import 'package:path/path.dart' as path;
 
+class BlockMergeResult {
+  const BlockMergeResult({
+    required this.blockId,
+    required this.cursorOffset,
+  });
+
+  final String blockId;
+  final int cursorOffset;
+}
+
 class ScreenplayEditorController extends ChangeNotifier {
   ScreenplayEditorController({LocalStorageService? storageService})
       : _storageService = storageService ?? LocalStorageService();
@@ -192,6 +202,54 @@ class ScreenplayEditorController extends ChangeNotifier {
     _pushUndoSnapshot();
     _document.blocks.removeAt(index);
     _markDocumentChanged();
+  }
+
+  BlockMergeResult? mergeBlockWithPrevious(String id) {
+    final index = _document.blocks.indexWhere((block) => block.id == id);
+
+    if (index <= 0 || _document.blocks.length <= 1) {
+      return null;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final previousBlock = _document.blocks[index - 1];
+    final currentBlock = _document.blocks[index];
+    final cursorOffset = previousBlock.text.length;
+
+    previousBlock.text = '${previousBlock.text}${currentBlock.text}';
+    _document.blocks.removeAt(index);
+    _markDocumentChanged();
+
+    return BlockMergeResult(
+      blockId: previousBlock.id,
+      cursorOffset: cursorOffset,
+    );
+  }
+
+  BlockMergeResult? mergeBlockWithNext(String id) {
+    final index = _document.blocks.indexWhere((block) => block.id == id);
+
+    if (index == -1 || index >= _document.blocks.length - 1) {
+      return null;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final currentBlock = _document.blocks[index];
+    final nextBlock = _document.blocks[index + 1];
+    final cursorOffset = currentBlock.text.length;
+
+    currentBlock.text = '${currentBlock.text}${nextBlock.text}';
+    _document.blocks.removeAt(index + 1);
+    _markDocumentChanged();
+
+    return BlockMergeResult(
+      blockId: currentBlock.id,
+      cursorOffset: cursorOffset,
+    );
   }
 
   bool undo() {

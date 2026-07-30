@@ -257,24 +257,65 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       return KeyEventResult.handled;
     }
 
-    if (key == LogicalKeyboardKey.backspace) {
-      final textController = _textControllers[block.id];
+    final textController = _textControllers[block.id];
+    final selection = textController?.selection;
+    final cursorAtBeginning = textController != null &&
+        selection != null &&
+        selection.isValid &&
+        selection.isCollapsed &&
+        selection.start == 0;
+    final cursorAtEnd = textController != null &&
+        selection != null &&
+        selection.isValid &&
+        selection.isCollapsed &&
+        selection.end == textController.text.length;
 
-      if (textController == null) {
-        return KeyEventResult.ignored;
-      }
+    if (!isControlPressed &&
+        !isAltPressed &&
+        key == LogicalKeyboardKey.backspace &&
+        cursorAtBeginning &&
+        blockIndex > 0) {
+      _mergeWithPrevious(block);
+      return KeyEventResult.handled;
+    }
 
-      final selection = textController.selection;
-      final cursorAtBeginning =
-          selection.isValid && selection.isCollapsed && selection.start == 0;
+    if (!isControlPressed &&
+        !isAltPressed &&
+        key == LogicalKeyboardKey.delete &&
+        cursorAtEnd &&
+        blockIndex < _controller.document.blocks.length - 1) {
+      _mergeWithNext(block);
+      return KeyEventResult.handled;
+    }
 
-      if (textController.text.isEmpty &&
-          cursorAtBeginning &&
-          blockIndex > 0 &&
-          _controller.document.blocks.length > 1) {
-        _deleteEmptyBlock(block);
-        return KeyEventResult.handled;
-      }
+    final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
+
+    if (!isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        cursorAtBeginning &&
+        blockIndex > 0 &&
+        (key == LogicalKeyboardKey.arrowLeft ||
+            key == LogicalKeyboardKey.arrowUp)) {
+      _moveFocusToAdjacentBlock(
+        targetIndex: blockIndex - 1,
+        cursorAtEnd: true,
+      );
+      return KeyEventResult.handled;
+    }
+
+    if (!isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        cursorAtEnd &&
+        blockIndex < _controller.document.blocks.length - 1 &&
+        (key == LogicalKeyboardKey.arrowRight ||
+            key == LogicalKeyboardKey.arrowDown)) {
+      _moveFocusToAdjacentBlock(
+        targetIndex: blockIndex + 1,
+        cursorAtEnd: false,
+      );
+      return KeyEventResult.handled;
     }
 
     return KeyEventResult.ignored;
@@ -494,23 +535,69 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     });
   }
 
-  void _deleteEmptyBlock(FilmBlock block) {
-    final blocks = _controller.document.blocks;
-    final index = blocks.indexWhere((item) => item.id == block.id);
+  void _mergeWithPrevious(FilmBlock block) {
+    final result = _controller.mergeBlockWithPrevious(block.id);
 
-    if (index <= 0 || blocks.length <= 1) {
+    if (result == null) {
       return;
     }
-
-    final previousBlock = blocks[index - 1];
-    _controller.deleteBlock(block.id);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
 
-      _focusBlock(previousBlock.id, cursorAtEnd: true);
+      _focusBlockAtOffset(
+        result.blockId,
+        result.cursorOffset,
+      );
+    });
+  }
+
+  void _mergeWithNext(FilmBlock block) {
+    final result = _controller.mergeBlockWithNext(block.id);
+
+    if (result == null) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlockAtOffset(
+        result.blockId,
+        result.cursorOffset,
+      );
+    });
+  }
+
+  void _moveFocusToAdjacentBlock({
+    required int targetIndex,
+    required bool cursorAtEnd,
+  }) {
+    final blocks = _controller.document.blocks;
+
+    if (targetIndex < 0 || targetIndex >= blocks.length) {
+      return;
+    }
+
+    final targetBlock = blocks[targetIndex];
+    final targetController = _textControllers[targetBlock.id];
+
+    if (targetController == null) {
+      return;
+    }
+
+    final cursorOffset = cursorAtEnd ? targetController.text.length : 0;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlockAtOffset(targetBlock.id, cursorOffset);
     });
   }
 
@@ -933,6 +1020,24 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     String blockId, {
     required bool cursorAtEnd,
   }) {
+    final textController = _textControllers[blockId];
+
+    if (textController == null) {
+      return;
+    }
+
+    _focusBlockAtOffset(
+      blockId,
+      cursorAtEnd ? textController.text.length : 0,
+      reveal: false,
+    );
+  }
+
+  void _focusBlockAtOffset(
+    String blockId,
+    int cursorOffset, {
+    bool reveal = true,
+  }) {
     final focusNode = _focusNodes[blockId];
     final textController = _textControllers[blockId];
 
@@ -940,10 +1045,29 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       return;
     }
 
+    final safeOffset =
+        cursorOffset.clamp(0, textController.text.length).toInt();
+
     focusNode.requestFocus();
-    textController.selection = TextSelection.collapsed(
-      offset: cursorAtEnd ? textController.text.length : 0,
-    );
+    textController.selection = TextSelection.collapsed(offset: safeOffset);
+    _activateSceneForBlock(blockId);
+
+    if (!reveal) {
+      return;
+    }
+
+    final blockContext = _blockKeys[blockId]?.currentContext;
+
+    if (blockContext != null) {
+      unawaited(
+        Scrollable.ensureVisible(
+          blockContext,
+          alignment: 0.18,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    }
   }
 
   void _activateSceneForBlock(String blockId) {
