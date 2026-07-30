@@ -8,6 +8,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/controller/screenplay_editor_controller.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_block_widget.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sheet.dart';
+import 'package:filmsoz_studio/features/screenplay/formatting/screenplay_editing_flow_service.dart';
 import 'package:filmsoz_studio/features/screenplay/formatting/smart_formatting_service.dart';
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service.dart';
@@ -28,6 +29,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   final FountainFileService _fountainFileService = const FountainFileService();
   final SmartFormattingService _smartFormattingService =
       const SmartFormattingService();
+  final ScreenplayEditingFlowService _editingFlowService =
+      const ScreenplayEditingFlowService();
 
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollAreaKey = GlobalKey();
@@ -405,17 +408,43 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       previousType: previousType,
     );
 
+    final enterPlan = _editingFlowService.planEnter(
+      currentType: formatted.type,
+      textBeforeCursor: formatted.text,
+      textAfterCursor: textAfterCursor,
+    );
+
     textController.value = TextEditingValue(
       text: formatted.text,
       selection: TextSelection.collapsed(offset: formatted.text.length),
     );
 
+    if (!enterPlan.shouldSplit) {
+      _controller.updateBlockContent(
+        block.id,
+        text: formatted.text,
+        inferredType: enterPlan.currentType,
+      );
+      _syncEditors();
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _isSplittingBlock = false;
+
+        if (!mounted) {
+          return;
+        }
+
+        _focusBlock(block.id, cursorAtEnd: true);
+      });
+      return;
+    }
+
     final newBlock = _controller.splitBlock(
       id: block.id,
       textBeforeCursor: formatted.text,
       textAfterCursor: textAfterCursor,
-      currentType: formatted.type,
-      nextType: _nextTypeAfterEnter(formatted.type),
+      currentType: enterPlan.currentType,
+      nextType: enterPlan.nextType,
     );
 
     _syncEditors();
@@ -435,15 +464,13 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     FilmBlock block, {
     required bool reverse,
   }) {
-    const types = BlockType.values;
-    final currentIndex = types.indexOf(block.type);
-    final nextIndex = reverse
-        ? (currentIndex - 1 + types.length) % types.length
-        : (currentIndex + 1) % types.length;
-
+    final nextType = _editingFlowService.cycleType(
+      block.type,
+      reverse: reverse,
+    );
     final selection = _textControllers[block.id]?.selection;
 
-    _controller.setBlockType(block.id, types[nextIndex]);
+    _controller.setBlockType(block.id, nextType);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -1059,23 +1086,6 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     return null;
   }
 
-  BlockType _nextTypeAfterEnter(BlockType currentType) {
-    switch (currentType) {
-      case BlockType.sceneHeading:
-        return BlockType.action;
-      case BlockType.action:
-        return BlockType.action;
-      case BlockType.character:
-        return BlockType.dialogue;
-      case BlockType.dialogue:
-        return BlockType.character;
-      case BlockType.parenthetical:
-        return BlockType.dialogue;
-      case BlockType.transition:
-        return BlockType.sceneHeading;
-    }
-  }
-
   String _saveStatusText() {
     if (_controller.isLoading) {
       return 'Загрузка сценария...';
@@ -1231,6 +1241,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                                               block.id,
                                               text,
                                             ),
+                                            nextBlockHint: _editingFlowService
+                                                .nextBlockHint(block.type),
                                           ),
                                         ),
                                     ],

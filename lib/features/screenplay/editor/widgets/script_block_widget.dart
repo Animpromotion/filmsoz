@@ -9,12 +9,14 @@ class ScriptBlockWidget extends StatelessWidget {
     required this.textController,
     required this.focusNode,
     required this.onChanged,
+    this.nextBlockHint,
   });
 
   final FilmBlock block;
   final TextEditingController textController;
   final FocusNode focusNode;
   final ValueChanged<String> onChanged;
+  final String? nextBlockHint;
 
   EdgeInsets _margins() {
     switch (block.type) {
@@ -76,35 +78,51 @@ class ScriptBlockWidget extends StatelessWidget {
     return Padding(
       key: ValueKey(block.id),
       padding: _margins(),
-      child: TextField(
-        controller: textController,
-        focusNode: focusNode,
-        minLines: 1,
-        maxLines: null,
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
-        onChanged: onChanged,
-        style: _textStyle(),
-        cursorColor: Colors.black,
-        textCapitalization: block.type == BlockType.sceneHeading ||
-                block.type == BlockType.character ||
-                block.type == BlockType.transition
-            ? TextCapitalization.characters
-            : TextCapitalization.sentences,
-        decoration: InputDecoration(
-          isDense: true,
-          contentPadding: EdgeInsets.zero,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          hintText: _hintText(),
-          hintStyle: const TextStyle(
-            fontFamily: 'Courier New',
-            fontSize: 15,
-            color: Color(0xFFAAAAAA),
-            height: 1.4,
-          ),
-        ),
+      child: AnimatedBuilder(
+        animation: focusNode,
+        builder: (context, _) {
+          final showNextBlockHint =
+              focusNode.hasFocus && nextBlockHint?.isNotEmpty == true;
+
+          return TextField(
+            controller: textController,
+            focusNode: focusNode,
+            minLines: 1,
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            onChanged: onChanged,
+            style: _textStyle(),
+            cursorColor: Colors.black,
+            textCapitalization: block.type == BlockType.sceneHeading ||
+                    block.type == BlockType.character ||
+                    block.type == BlockType.transition
+                ? TextCapitalization.characters
+                : TextCapitalization.sentences,
+            decoration: InputDecoration(
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              hintText: _hintText(),
+              hintStyle: const TextStyle(
+                fontFamily: 'Courier New',
+                fontSize: 15,
+                color: Color(0xFFAAAAAA),
+                height: 1.4,
+              ),
+              helperText: showNextBlockHint ? nextBlockHint : null,
+              helperMaxLines: 1,
+              helperStyle: const TextStyle(
+                fontFamily: 'Courier New',
+                fontSize: 10.5,
+                color: Color(0xFF777777),
+                height: 1.2,
+              ),
+            ),
+          );
+        },
       ),
     );
   }
