@@ -8,17 +8,13 @@ void main() {
     'Filmsoz Studio открывает сценарный редактор',
     (WidgetTester tester) async {
       await tester.pumpWidget(const FilmnomaApp());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(EditorMainScreen), findsOneWidget);
+      expect(find.byType(TextField), findsWidgets);
+
+      await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
-
-      expect(
-        find.byType(EditorMainScreen),
-        findsOneWidget,
-      );
-
-      expect(
-        find.byType(TextField),
-        findsWidgets,
-      );
     },
   );
 }

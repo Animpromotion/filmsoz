@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -17,8 +18,10 @@ class EditorMainScreen extends StatefulWidget {
   State<EditorMainScreen> createState() => _EditorMainScreenState();
 }
 
-class _EditorMainScreenState extends State<EditorMainScreen> {
-  final ScreenplayEditorController _controller = ScreenplayEditorController();
+class _EditorMainScreenState extends State<EditorMainScreen>
+    with WidgetsBindingObserver {
+  late final ScreenplayEditorController _controller;
+
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollAreaKey = GlobalKey();
 
@@ -28,15 +31,40 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
 
   bool _isSplittingBlock = false;
   bool _scrollUpdateScheduled = false;
+  bool _initialFocusPlaced = false;
   String? _activeSceneId;
 
   @override
   void initState() {
     super.initState();
 
+    WidgetsBinding.instance.addObserver(this);
+
+    _controller = ScreenplayEditorController();
     _controller.addListener(_onDocumentChanged);
     _scrollController.addListener(_scheduleActiveSceneUpdateFromScroll);
+
     _syncEditors();
+    unawaited(_initializeEditor());
+  }
+
+  Future<void> _initializeEditor() async {
+    await _controller.initialize();
+
+    if (!mounted) {
+      return;
+    }
+
+    _syncEditors();
+    _placeInitialFocus();
+  }
+
+  void _placeInitialFocus() {
+    if (_initialFocusPlaced || _controller.document.blocks.isEmpty) {
+      return;
+    }
+
+    _initialFocusPlaced = true;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _controller.document.blocks.isEmpty) {
@@ -44,14 +72,15 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
       }
 
       final firstScene = _controller.document.scenes.firstOrNull;
-      _activeSceneId = firstScene?.id;
+
+      setState(() {
+        _activeSceneId = firstScene?.id;
+      });
 
       _focusBlock(
         _controller.document.blocks.first.id,
         cursorAtEnd: true,
       );
-
-      setState(() {});
     });
   }
 
@@ -63,6 +92,10 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
 
     if (_activeSceneId != null && !sceneIds.contains(_activeSceneId)) {
       _activeSceneId = _controller.document.scenes.firstOrNull?.id;
+    }
+
+    if (_controller.isInitialized) {
+      _placeInitialFocus();
     }
 
     if (mounted) {
@@ -145,8 +178,9 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
     final block = _controller.document.blocks[blockIndex];
     final key = event.logicalKey;
 
-    if (key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter) {
+    if ((key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) &&
+        !HardwareKeyboard.instance.isShiftPressed) {
       _splitBlockAtSelection(block);
       return KeyEventResult.handled;
     }
@@ -190,6 +224,12 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
     final newLineIndex = text.indexOf('\n');
 
     if (newLineIndex == -1) {
+      _controller.updateBlockText(blockId, text);
+      return;
+    }
+
+    // Shift + Enter оставляет перенос внутри текущего блока.
+    if (HardwareKeyboard.instance.isShiftPressed) {
       _controller.updateBlockText(blockId, text);
       return;
     }
@@ -290,7 +330,7 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
     FilmBlock block, {
     required bool reverse,
   }) {
-    final types = BlockType.values;
+    const types = BlockType.values;
     final currentIndex = types.indexOf(block.type);
     final nextIndex = reverse
         ? (currentIndex - 1 + types.length) % types.length
@@ -516,87 +556,192 @@ class _EditorMainScreenState extends State<EditorMainScreen> {
     }
   }
 
+  String _saveStatusText() {
+    if (_controller.isLoading) {
+      return 'Загрузка сценария...';
+    }
+
+    if (_controller.isSaving) {
+      return 'Сохранение...';
+    }
+
+    if (_controller.lastError != null) {
+      return _controller.lastError!;
+    }
+
+    if (_controller.isDirty) {
+      return 'Есть несохранённые изменения';
+    }
+
+    final lastSavedAt = _controller.lastSavedAt;
+
+    if (lastSavedAt == null) {
+      return 'Автосохранение готово';
+    }
+
+    final hours = lastSavedAt.hour.toString().padLeft(2, '0');
+    final minutes = lastSavedAt.minute.toString().padLeft(2, '0');
+    final seconds = lastSavedAt.second.toString().padLeft(2, '0');
+
+    return 'Сохранено в $hours:$minutes:$seconds';
+  }
+
   @override
   Widget build(BuildContext context) {
     final scenes = _controller.document.scenes;
     final activeScene = _findBlockById(_activeSceneId);
 
-    return Scaffold(
-      body: Column(
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(
+          LogicalKeyboardKey.keyS,
+          control: true,
+        ): () => unawaited(_controller.saveDocument(force: true)),
+      },
+      child: Stack(
         children: [
-          const EditorToolbar(),
-          Expanded(
-            child: Row(
+          Scaffold(
+            body: Column(
               children: [
-                SceneNavigator(
-                  scenes: scenes,
-                  selectedSceneId: _activeSceneId,
-                  onSceneSelected: _selectScene,
+                EditorToolbar(
+                  onSave: () => unawaited(
+                    _controller.saveDocument(force: true),
+                  ),
+                  isSaving: _controller.isSaving,
                 ),
-                const VerticalDivider(width: 1),
                 Expanded(
-                  child: ColoredBox(
-                    key: _scrollAreaKey,
-                    color: const Color(0xFF1E1E1E),
-                    child: Scrollbar(
-                      controller: _scrollController,
-                      thumbVisibility: true,
-                      child: SingleChildScrollView(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Center(
-                          child: ScriptPageSheet(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                for (final block in _controller.document.blocks)
-                                  KeyedSubtree(
-                                    key: _blockKeys[block.id],
-                                    child: ScriptBlockWidget(
-                                      block: block,
-                                      textController:
-                                          _textControllers[block.id]!,
-                                      focusNode: _focusNodes[block.id]!,
-                                      onChanged: (text) =>
-                                          _handleTextChanged(block.id, text),
-                                    ),
+                  child: Row(
+                    children: [
+                      SceneNavigator(
+                        scenes: scenes,
+                        selectedSceneId: _activeSceneId,
+                        onSceneSelected: _selectScene,
+                      ),
+                      const VerticalDivider(width: 1),
+                      Expanded(
+                        child: ColoredBox(
+                          key: _scrollAreaKey,
+                          color: const Color(0xFF1E1E1E),
+                          child: Scrollbar(
+                            controller: _scrollController,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                              ),
+                              child: Center(
+                                child: ScriptPageSheet(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      for (final block
+                                          in _controller.document.blocks)
+                                        KeyedSubtree(
+                                          key: _blockKeys[block.id],
+                                          child: ScriptBlockWidget(
+                                            block: block,
+                                            textController:
+                                                _textControllers[block.id]!,
+                                            focusNode: _focusNodes[block.id]!,
+                                            onChanged: (text) =>
+                                                _handleTextChanged(
+                                              block.id,
+                                              text,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
-                              ],
+                                ),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
+                  ),
+                ),
+                Container(
+                  height: 28,
+                  color: const Color(0xFF252526),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Сцен: ${scenes.length}  •  '
+                          'Блоков: ${_controller.document.blocks.length}  •  '
+                          'Активная: ${activeScene?.text.trim().isNotEmpty == true ? activeScene!.text : 'БЕЗ НАЗВАНИЯ'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFAAAAAA),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Tooltip(
+                        message: _controller.storagePath ??
+                            'Путь будет определён после запуска',
+                        child: Text(
+                          '${_saveStatusText()}  •  Ctrl+S',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _controller.lastError == null
+                                ? const Color(0xFF9FD39F)
+                                : const Color(0xFFFF9A9A),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-          Container(
-            height: 28,
-            color: const Color(0xFF252526),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Сцен: ${scenes.length}  •  '
-              'Блоков: ${_controller.document.blocks.length}  •  '
-              'Активная: ${activeScene?.text.trim().isNotEmpty == true ? activeScene!.text : 'БЕЗ НАЗВАНИЯ'}  •  '
-              'Enter: новый блок  •  Tab: тип блока',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFAAAAAA),
-                fontSize: 11,
+          if (_controller.isLoading)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0x99000000),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 14),
+                      Text(
+                        'Загрузка последнего сценария...',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      unawaited(_controller.saveDocument(force: true));
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+
     _controller
       ..removeListener(_onDocumentChanged)
       ..dispose();

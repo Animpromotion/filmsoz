@@ -7,24 +7,64 @@ import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
 
 class ScreenplayEditorController extends ChangeNotifier {
-  ScreenplayEditorController() {
-    _document = FilmDocument.empty();
-    _startAutoSaveTimer();
-  }
+  ScreenplayEditorController({LocalStorageService? storageService})
+      : _storageService = storageService ?? LocalStorageService();
 
-  final LocalStorageService _storageService = LocalStorageService();
+  final LocalStorageService _storageService;
 
-  late FilmDocument _document;
-  Timer? _autoSaveTimer;
+  FilmDocument _document = FilmDocument.empty();
+  Timer? _periodicSaveTimer;
+  Timer? _debouncedSaveTimer;
+
+  bool _isInitialized = false;
+  bool _isLoading = true;
+  bool _isSaving = false;
+  bool _isDirty = false;
+  bool _saveRequestedWhileSaving = false;
+  bool _isDisposed = false;
+
   int _idCounter = 0;
+  int _revision = 0;
+
+  DateTime? _lastSavedAt;
+  String? _lastError;
+  String? _storagePath;
 
   FilmDocument get document => _document;
+  bool get isInitialized => _isInitialized;
+  bool get isLoading => _isLoading;
+  bool get isSaving => _isSaving;
+  bool get isDirty => _isDirty;
+  DateTime? get lastSavedAt => _lastSavedAt;
+  String? get lastError => _lastError;
+  String? get storagePath => _storagePath;
 
-  void _startAutoSaveTimer() {
-    _autoSaveTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => unawaited(saveDocument()),
-    );
+  Future<void> initialize() async {
+    if (_isInitialized) {
+      return;
+    }
+
+    _isLoading = true;
+    _lastError = null;
+    _notifySafely();
+
+    try {
+      final loadedDocument = await _storageService.loadFromLocal();
+
+      if (loadedDocument != null) {
+        _document = loadedDocument;
+      }
+
+      _storagePath = await _storageService.autosavePath;
+    } catch (error) {
+      _lastError = 'Не удалось загрузить автосохранение: $error';
+    } finally {
+      _isInitialized = true;
+      _isLoading = false;
+      _isDirty = false;
+      _startPeriodicSave();
+      _notifySafely();
+    }
   }
 
   void updateBlockText(String id, String text) {
@@ -35,7 +75,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     }
 
     _document.blocks[index].text = text;
-    notifyListeners();
+    _markDocumentChanged();
   }
 
   void setBlockType(String id, BlockType type) {
@@ -46,7 +86,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     }
 
     _document.blocks[index].type = type;
-    notifyListeners();
+    _markDocumentChanged();
   }
 
   FilmBlock splitBlock({
@@ -70,7 +110,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.blocks.insert(index + 1, newBlock);
     }
 
-    notifyListeners();
+    _markDocumentChanged();
     return newBlock;
   }
 
@@ -86,7 +126,82 @@ class ScreenplayEditorController extends ChangeNotifier {
     }
 
     _document.blocks.removeAt(index);
-    notifyListeners();
+    _markDocumentChanged();
+  }
+
+  Future<void> saveDocument({bool force = false}) async {
+    if (_isDisposed || !_isInitialized) {
+      return;
+    }
+
+    if (_isSaving) {
+      _saveRequestedWhileSaving = true;
+      return;
+    }
+
+    if (!force && !_isDirty) {
+      return;
+    }
+
+    _debouncedSaveTimer?.cancel();
+    _isSaving = true;
+    _lastError = null;
+
+    final savedRevision = _revision;
+    _notifySafely();
+
+    try {
+      await _storageService.saveToLocal(_document);
+      _storagePath ??= await _storageService.autosavePath;
+      _lastSavedAt = DateTime.now();
+
+      if (_revision == savedRevision) {
+        _isDirty = false;
+      }
+    } catch (error) {
+      _lastError = 'Ошибка сохранения: $error';
+      _isDirty = true;
+    } finally {
+      _isSaving = false;
+
+      final shouldSaveAgain =
+          _saveRequestedWhileSaving || _revision != savedRevision;
+
+      _saveRequestedWhileSaving = false;
+      _notifySafely();
+
+      if (shouldSaveAgain && !_isDisposed) {
+        _scheduleDebouncedSave(
+          delay: const Duration(milliseconds: 350),
+        );
+      }
+    }
+  }
+
+  void _markDocumentChanged() {
+    _revision++;
+    _isDirty = true;
+    _lastError = null;
+    _scheduleDebouncedSave();
+    _notifySafely();
+  }
+
+  void _scheduleDebouncedSave({
+    Duration delay = const Duration(milliseconds: 900),
+  }) {
+    _debouncedSaveTimer?.cancel();
+    _debouncedSaveTimer = Timer(
+      delay,
+      () => unawaited(saveDocument()),
+    );
+  }
+
+  void _startPeriodicSave() {
+    _periodicSaveTimer?.cancel();
+    _periodicSaveTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(saveDocument()),
+    );
   }
 
   String _generateBlockId() {
@@ -94,13 +209,17 @@ class ScreenplayEditorController extends ChangeNotifier {
     return '${timestamp}_${_idCounter++}';
   }
 
-  Future<void> saveDocument() async {
-    await _storageService.saveToLocal(_document);
+  void _notifySafely() {
+    if (!_isDisposed) {
+      notifyListeners();
+    }
   }
 
   @override
   void dispose() {
-    _autoSaveTimer?.cancel();
+    _isDisposed = true;
+    _periodicSaveTimer?.cancel();
+    _debouncedSaveTimer?.cancel();
     super.dispose();
   }
 }
