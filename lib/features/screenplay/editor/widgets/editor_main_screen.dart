@@ -38,7 +38,10 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   final Map<String, TextEditingController> _textControllers = {};
   final Map<String, FocusNode> _focusNodes = {};
   final Map<String, GlobalKey> _blockKeys = {};
+  final Set<String> _selectedBlockIds = <String>{};
 
+  List<FilmBlock> _blockClipboard = const <FilmBlock>[];
+  String? _selectionAnchorId;
   bool _isSplittingBlock = false;
   bool _scrollUpdateScheduled = false;
   bool _initialFocusPlaced = false;
@@ -103,6 +106,17 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
   void _onDocumentChanged() {
     _syncEditors();
+
+    final activeBlockIds =
+        _controller.document.blocks.map((block) => block.id).toSet();
+    _selectedBlockIds.removeWhere(
+      (blockId) => !activeBlockIds.contains(blockId),
+    );
+
+    if (_selectionAnchorId != null &&
+        !activeBlockIds.contains(_selectionAnchorId)) {
+      _selectionAnchorId = null;
+    }
 
     final sceneIds =
         _controller.document.scenes.map((scene) => scene.id).toSet();
@@ -196,6 +210,63 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     final key = event.logicalKey;
     final isControlPressed = HardwareKeyboard.instance.isControlPressed;
     final isAltPressed = HardwareKeyboard.instance.isAltPressed;
+    final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
+    final hasBlockSelection = _selectedBlockIds.isNotEmpty;
+
+    if (!isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.escape &&
+        hasBlockSelection) {
+      _clearBlockSelection();
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.keyC &&
+        hasBlockSelection) {
+      unawaited(_copySelectedBlocks());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.keyX &&
+        hasBlockSelection) {
+      unawaited(_cutSelectedBlocks());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        key == LogicalKeyboardKey.keyV &&
+        hasBlockSelection) {
+      _pasteCopiedBlocks();
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        isShiftPressed &&
+        key == LogicalKeyboardKey.keyV &&
+        _blockClipboard.isNotEmpty) {
+      _pasteCopiedBlocks(afterBlockId: block.id);
+      return KeyEventResult.handled;
+    }
+
+    if (!isControlPressed &&
+        !isAltPressed &&
+        !isShiftPressed &&
+        hasBlockSelection &&
+        (key == LogicalKeyboardKey.delete ||
+            key == LogicalKeyboardKey.backspace)) {
+      _deleteSelectedBlocks();
+      return KeyEventResult.handled;
+    }
 
     if (isControlPressed && isAltPressed && key == LogicalKeyboardKey.keyO) {
       unawaited(_importFountain());
@@ -288,8 +359,6 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       return KeyEventResult.handled;
     }
 
-    final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
-
     if (!isControlPressed &&
         !isAltPressed &&
         !isShiftPressed &&
@@ -319,6 +388,339 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     }
 
     return KeyEventResult.ignored;
+  }
+
+  void _handleBlockPointerDown(String blockId) {
+    final isControlPressed = HardwareKeyboard.instance.isControlPressed;
+    final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
+
+    if (!isControlPressed && !isShiftPressed) {
+      _selectionAnchorId = blockId;
+
+      if (_selectedBlockIds.isNotEmpty && mounted) {
+        setState(_selectedBlockIds.clear);
+      }
+
+      return;
+    }
+
+    if (isShiftPressed) {
+      _selectBlockRange(
+        blockId,
+        additive: isControlPressed,
+      );
+      return;
+    }
+
+    setState(() {
+      if (_selectedBlockIds.contains(blockId)) {
+        _selectedBlockIds.remove(blockId);
+      } else {
+        _selectedBlockIds.add(blockId);
+      }
+
+      _selectionAnchorId = blockId;
+    });
+  }
+
+  void _selectBlockRange(
+    String targetBlockId, {
+    required bool additive,
+  }) {
+    final blocks = _controller.document.blocks;
+    final firstSelectedBlockId =
+        _selectedBlockIds.isEmpty ? null : _selectedBlockIds.first;
+    final anchorBlockId = _selectionAnchorId ??
+        _focusedBlockId() ??
+        firstSelectedBlockId ??
+        targetBlockId;
+    final anchorIndex = blocks.indexWhere(
+      (block) => block.id == anchorBlockId,
+    );
+    final targetIndex = blocks.indexWhere(
+      (block) => block.id == targetBlockId,
+    );
+
+    if (targetIndex == -1) {
+      return;
+    }
+
+    final safeAnchorIndex = anchorIndex == -1 ? targetIndex : anchorIndex;
+    final startIndex = math.min(safeAnchorIndex, targetIndex);
+    final endIndex = math.max(safeAnchorIndex, targetIndex);
+
+    setState(() {
+      if (!additive) {
+        _selectedBlockIds.clear();
+      }
+
+      for (var index = startIndex; index <= endIndex; index++) {
+        _selectedBlockIds.add(blocks[index].id);
+      }
+
+      _selectionAnchorId = anchorBlockId;
+    });
+  }
+
+  List<String> _selectedIdsInDocumentOrder() {
+    return _controller.document.blocks
+        .where((block) => _selectedBlockIds.contains(block.id))
+        .map((block) => block.id)
+        .toList(growable: false);
+  }
+
+  Future<void> _copySelectedBlocks() async {
+    final selectedBlocks = _controller.copyBlocksByIds(_selectedBlockIds);
+
+    if (selectedBlocks.isEmpty) {
+      return;
+    }
+
+    _blockClipboard = selectedBlocks;
+
+    try {
+      await Clipboard.setData(
+        ClipboardData(
+          text: selectedBlocks.map((block) => block.text).join('\n\n'),
+        ),
+      );
+    } catch (_) {
+      // The internal Filmsoz clipboard still preserves block types.
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {});
+
+    _showOperationMessage(
+      'Скопировано блоков: ${selectedBlocks.length}',
+    );
+  }
+
+  Future<void> _cutSelectedBlocks() async {
+    final selectedIds = _selectedIdsInDocumentOrder();
+    final selectedBlocks = _controller.copyBlocksByIds(selectedIds);
+
+    if (selectedBlocks.isEmpty) {
+      return;
+    }
+
+    _blockClipboard = selectedBlocks;
+
+    try {
+      await Clipboard.setData(
+        ClipboardData(
+          text: selectedBlocks.map((block) => block.text).join('\n\n'),
+        ),
+      );
+    } catch (_) {
+      // Cutting still works through the internal Filmsoz clipboard.
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    _deleteBlockIds(
+      selectedIds,
+      successMessage: 'Вырезано блоков: ${selectedBlocks.length}',
+    );
+  }
+
+  void _deleteSelectedBlocks() {
+    final selectedIds = _selectedIdsInDocumentOrder();
+
+    if (selectedIds.isEmpty) {
+      return;
+    }
+
+    _deleteBlockIds(
+      selectedIds,
+      successMessage: 'Удалено блоков: ${selectedIds.length}',
+    );
+  }
+
+  void _deleteBlockIds(
+    List<String> blockIds, {
+    required String successMessage,
+  }) {
+    final result = _controller.deleteBlocks(blockIds);
+
+    if (result == null) {
+      return;
+    }
+
+    _selectedBlockIds.clear();
+    _selectionAnchorId = null;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlockAtOffset(
+        result.focusBlockId,
+        result.cursorOffset,
+      );
+      _showOperationMessage(successMessage);
+    });
+  }
+
+  void _pasteCopiedBlocks({String? afterBlockId}) {
+    if (_blockClipboard.isEmpty) {
+      _showOperationMessage('Буфер блоков Filmsoz пуст.');
+      return;
+    }
+
+    final selectedIds = _selectedIdsInDocumentOrder();
+    final documentBlocks = _controller.document.blocks;
+    final lastBlockId = documentBlocks.isEmpty ? null : documentBlocks.last.id;
+    final insertionAnchor = selectedIds.isNotEmpty
+        ? selectedIds.last
+        : afterBlockId ?? _focusedBlockId() ?? lastBlockId;
+    final result = _controller.insertBlocksAfter(
+      afterBlockId: insertionAnchor,
+      blocks: _blockClipboard,
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _selectedBlockIds
+        ..clear()
+        ..addAll(result.insertedBlockIds);
+      _selectionAnchorId = result.focusBlockId;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlock(
+        result.focusBlockId,
+        cursorAtEnd: false,
+      );
+      _showOperationMessage(
+        'Вставлено блоков: ${result.insertedBlockIds.length}',
+      );
+    });
+  }
+
+  void _clearBlockSelection() {
+    if (_selectedBlockIds.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _selectedBlockIds.clear();
+      _selectionAnchorId = null;
+    });
+  }
+
+  Widget _buildSelectableBlock(FilmBlock block) {
+    final isSelected = _selectedBlockIds.contains(block.id);
+
+    return KeyedSubtree(
+      key: _blockKeys[block.id],
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _handleBlockPointerDown(block.id),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0x16E5A93C) : Colors.transparent,
+            border: Border(
+              left: BorderSide(
+                color:
+                    isSelected ? const Color(0xFFE5A93C) : Colors.transparent,
+                width: 3,
+              ),
+            ),
+          ),
+          child: ScriptBlockWidget(
+            block: block,
+            textController: _textControllers[block.id]!,
+            focusNode: _focusNodes[block.id]!,
+            onChanged: (text) => _handleTextChanged(
+              block.id,
+              text,
+            ),
+            nextBlockHint: _editingFlowService.nextBlockHint(block.type),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlockSelectionToolbar() {
+    return Container(
+      height: 44,
+      color: const Color(0xFF2B2B2E),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.select_all,
+            size: 18,
+            color: Color(0xFFE5A93C),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Выбрано блоков: ${_selectedBlockIds.length}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 18),
+          const Expanded(
+            child: Text(
+              'Ctrl+клик — выбрать блок  •  Shift+клик — диапазон',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Color(0xFFB8B8BD),
+                fontSize: 11,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => unawaited(_copySelectedBlocks()),
+            icon: const Icon(Icons.copy_outlined, size: 16),
+            label: const Text('Копировать'),
+          ),
+          TextButton.icon(
+            onPressed: () => unawaited(_cutSelectedBlocks()),
+            icon: const Icon(Icons.content_cut_outlined, size: 16),
+            label: const Text('Вырезать'),
+          ),
+          TextButton.icon(
+            onPressed:
+                _blockClipboard.isEmpty ? null : () => _pasteCopiedBlocks(),
+            icon: const Icon(Icons.content_paste_outlined, size: 16),
+            label: const Text('Вставить'),
+          ),
+          TextButton.icon(
+            onPressed: _deleteSelectedBlocks,
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('Удалить'),
+          ),
+          IconButton(
+            tooltip: 'Снять выделение (Esc)',
+            onPressed: _clearBlockSelection,
+            icon: const Icon(Icons.close, size: 18),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleTextChanged(String blockId, String text) {
@@ -921,6 +1323,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
   void _prepareDocumentReplacement() {
     FocusManager.instance.primaryFocus?.unfocus();
+    _selectedBlockIds.clear();
+    _selectionAnchorId = null;
     _initialFocusPlaced = false;
     _activeSceneId = null;
     _forceTextSync = true;
@@ -945,6 +1349,10 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   }
 
   void _performHistoryAction(bool Function() action) {
+    final hadBlockSelection = _selectedBlockIds.isNotEmpty;
+    _selectedBlockIds.clear();
+    _selectionAnchorId = null;
+
     final focusedBlockId = _focusedBlockId();
     final previousBlocks = _controller.document.blocks;
     final previousIndex = focusedBlockId == null
@@ -959,6 +1367,10 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     _forceTextSync = false;
 
     if (!changed) {
+      if (hadBlockSelection && mounted) {
+        setState(() {});
+      }
+
       return;
     }
 
@@ -1299,6 +1711,36 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           LogicalKeyboardKey.keyY,
           control: true,
         ): _redo,
+        if (_selectedBlockIds.isNotEmpty)
+          const SingleActivator(
+            LogicalKeyboardKey.keyC,
+            control: true,
+          ): () => unawaited(_copySelectedBlocks()),
+        if (_selectedBlockIds.isNotEmpty)
+          const SingleActivator(
+            LogicalKeyboardKey.keyX,
+            control: true,
+          ): () => unawaited(_cutSelectedBlocks()),
+        if (_selectedBlockIds.isNotEmpty)
+          const SingleActivator(
+            LogicalKeyboardKey.keyV,
+            control: true,
+          ): () => _pasteCopiedBlocks(),
+        if (_blockClipboard.isNotEmpty)
+          const SingleActivator(
+            LogicalKeyboardKey.keyV,
+            control: true,
+            shift: true,
+          ): () => _pasteCopiedBlocks(),
+        if (_selectedBlockIds.isNotEmpty)
+          const SingleActivator(LogicalKeyboardKey.delete):
+              _deleteSelectedBlocks,
+        if (_selectedBlockIds.isNotEmpty)
+          const SingleActivator(LogicalKeyboardKey.backspace):
+              _deleteSelectedBlocks,
+        if (_selectedBlockIds.isNotEmpty)
+          const SingleActivator(LogicalKeyboardKey.escape):
+              _clearBlockSelection,
       },
       child: Stack(
         children: [
@@ -1334,47 +1776,40 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                       ),
                       const VerticalDivider(width: 1),
                       Expanded(
-                        child: ColoredBox(
-                          key: _scrollAreaKey,
-                          color: const Color(0xFF1E1E1E),
-                          child: Scrollbar(
-                            controller: _scrollController,
-                            thumbVisibility: true,
-                            child: SingleChildScrollView(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                              ),
-                              child: Center(
-                                child: ScriptPageSheet(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      for (final block
-                                          in _controller.document.blocks)
-                                        KeyedSubtree(
-                                          key: _blockKeys[block.id],
-                                          child: ScriptBlockWidget(
-                                            block: block,
-                                            textController:
-                                                _textControllers[block.id]!,
-                                            focusNode: _focusNodes[block.id]!,
-                                            onChanged: (text) =>
-                                                _handleTextChanged(
-                                              block.id,
-                                              text,
-                                            ),
-                                            nextBlockHint: _editingFlowService
-                                                .nextBlockHint(block.type),
-                                          ),
+                        child: Column(
+                          children: [
+                            if (_selectedBlockIds.isNotEmpty)
+                              _buildBlockSelectionToolbar(),
+                            Expanded(
+                              child: ColoredBox(
+                                key: _scrollAreaKey,
+                                color: const Color(0xFF1E1E1E),
+                                child: Scrollbar(
+                                  controller: _scrollController,
+                                  thumbVisibility: true,
+                                  child: SingleChildScrollView(
+                                    controller: _scrollController,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 24,
+                                    ),
+                                    child: Center(
+                                      child: ScriptPageSheet(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            for (final block
+                                                in _controller.document.blocks)
+                                              _buildSelectableBlock(block),
+                                          ],
                                         ),
-                                    ],
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
+                          ],
                         ),
                       ),
                     ],
@@ -1389,7 +1824,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                       Expanded(
                         child: Text(
                           'Сцен: ${scenes.length}  •  '
-                          'Блоков: ${_controller.document.blocks.length}  •  '
+                          'Блоков: ${_controller.document.blocks.length}'
+                          '${_selectedBlockIds.isEmpty ? '' : '  •  Выбрано: ${_selectedBlockIds.length}'}  •  '
                           'Активная: ${activeScene?.text.trim().isNotEmpty == true ? activeScene!.text : 'БЕЗ НАЗВАНИЯ'}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1404,7 +1840,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                         message: _controller.storagePath ??
                             'Путь будет определён после запуска',
                         child: Text(
-                          '${_saveStatusText()}  •  Ctrl+S  •  Ctrl+N / Ctrl+O  •  Ctrl+Z / Ctrl+Y',
+                          '${_saveStatusText()}  •  Ctrl+S  •  Ctrl+клик: блоки  •  Ctrl+Z / Ctrl+Y',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

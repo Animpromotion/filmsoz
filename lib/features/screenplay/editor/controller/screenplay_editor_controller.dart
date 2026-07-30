@@ -18,6 +18,26 @@ class BlockMergeResult {
   final int cursorOffset;
 }
 
+class BlockDeletionResult {
+  const BlockDeletionResult({
+    required this.focusBlockId,
+    required this.cursorOffset,
+  });
+
+  final String focusBlockId;
+  final int cursorOffset;
+}
+
+class BlockInsertionResult {
+  const BlockInsertionResult({
+    required this.insertedBlockIds,
+    required this.focusBlockId,
+  });
+
+  final List<String> insertedBlockIds;
+  final String focusBlockId;
+}
+
 class ScreenplayEditorController extends ChangeNotifier {
   ScreenplayEditorController({LocalStorageService? storageService})
       : _storageService = storageService ?? LocalStorageService();
@@ -202,6 +222,104 @@ class ScreenplayEditorController extends ChangeNotifier {
     _pushUndoSnapshot();
     _document.blocks.removeAt(index);
     _markDocumentChanged();
+  }
+
+  List<FilmBlock> copyBlocksByIds(Iterable<String> blockIds) {
+    final selectedIds = blockIds.toSet();
+
+    return _document.blocks
+        .where((block) => selectedIds.contains(block.id))
+        .map(
+          (block) => FilmBlock(
+            id: block.id,
+            type: block.type,
+            text: block.text,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  BlockDeletionResult? deleteBlocks(Iterable<String> blockIds) {
+    final selectedIds = blockIds.toSet();
+    final selectedIndexes = <int>[];
+
+    for (var index = 0; index < _document.blocks.length; index++) {
+      if (selectedIds.contains(_document.blocks[index].id)) {
+        selectedIndexes.add(index);
+      }
+    }
+
+    if (selectedIndexes.isEmpty) {
+      return null;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final firstSelectedIndex = selectedIndexes.first;
+    _document.blocks.removeWhere(
+      (block) => selectedIds.contains(block.id),
+    );
+
+    if (_document.blocks.isEmpty) {
+      _document.blocks.add(
+        FilmBlock(
+          id: _generateBlockId(),
+          type: BlockType.action,
+          text: '',
+        ),
+      );
+    }
+
+    final focusIndex = firstSelectedIndex >= _document.blocks.length
+        ? _document.blocks.length - 1
+        : firstSelectedIndex;
+    final focusBlock = _document.blocks[focusIndex];
+
+    _markDocumentChanged();
+
+    return BlockDeletionResult(
+      focusBlockId: focusBlock.id,
+      cursorOffset: focusBlock.text.length,
+    );
+  }
+
+  BlockInsertionResult? insertBlocksAfter({
+    required String? afterBlockId,
+    required Iterable<FilmBlock> blocks,
+  }) {
+    final sourceBlocks = blocks.toList(growable: false);
+
+    if (sourceBlocks.isEmpty) {
+      return null;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final afterIndex = afterBlockId == null
+        ? -1
+        : _document.blocks.indexWhere((block) => block.id == afterBlockId);
+    final insertionIndex =
+        afterIndex == -1 ? _document.blocks.length : afterIndex + 1;
+    final insertedBlocks = sourceBlocks
+        .map(
+          (block) => FilmBlock(
+            id: _generateBlockId(),
+            type: block.type,
+            text: block.text,
+          ),
+        )
+        .toList(growable: false);
+
+    _document.blocks.insertAll(insertionIndex, insertedBlocks);
+    _markDocumentChanged();
+
+    return BlockInsertionResult(
+      insertedBlockIds:
+          insertedBlocks.map((block) => block.id).toList(growable: false),
+      focusBlockId: insertedBlocks.first.id,
+    );
   }
 
   BlockMergeResult? mergeBlockWithPrevious(String id) {
