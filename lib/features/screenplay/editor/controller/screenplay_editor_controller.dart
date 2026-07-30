@@ -10,11 +10,18 @@ class ScreenplayEditorController extends ChangeNotifier {
   ScreenplayEditorController({LocalStorageService? storageService})
       : _storageService = storageService ?? LocalStorageService();
 
+  static const int _historyLimit = 100;
+  static const Duration _typingGroupDelay = Duration(milliseconds: 850);
+
   final LocalStorageService _storageService;
 
   FilmDocument _document = FilmDocument.empty();
+  final List<FilmDocument> _undoStack = <FilmDocument>[];
+  final List<FilmDocument> _redoStack = <FilmDocument>[];
+
   Timer? _periodicSaveTimer;
   Timer? _debouncedSaveTimer;
+  Timer? _typingGroupTimer;
 
   bool _isInitialized = false;
   bool _isLoading = true;
@@ -25,6 +32,7 @@ class ScreenplayEditorController extends ChangeNotifier {
 
   int _idCounter = 0;
   int _revision = 0;
+  String? _typingBlockId;
 
   DateTime? _lastSavedAt;
   String? _lastError;
@@ -35,6 +43,8 @@ class ScreenplayEditorController extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isSaving => _isSaving;
   bool get isDirty => _isDirty;
+  bool get canUndo => _undoStack.isNotEmpty;
+  bool get canRedo => _redoStack.isNotEmpty;
   DateTime? get lastSavedAt => _lastSavedAt;
   String? get lastError => _lastError;
   String? get storagePath => _storagePath;
@@ -59,6 +69,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     } catch (error) {
       _lastError = 'Не удалось загрузить автосохранение: $error';
     } finally {
+      _clearHistory();
       _isInitialized = true;
       _isLoading = false;
       _isDirty = false;
@@ -74,6 +85,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       return;
     }
 
+    _recordTypingHistory(id);
     _document.blocks[index].text = text;
     _markDocumentChanged();
   }
@@ -85,6 +97,8 @@ class ScreenplayEditorController extends ChangeNotifier {
       return;
     }
 
+    _finishTypingGroup();
+    _pushUndoSnapshot();
     _document.blocks[index].type = type;
     _markDocumentChanged();
   }
@@ -95,6 +109,9 @@ class ScreenplayEditorController extends ChangeNotifier {
     required String textAfterCursor,
     required BlockType nextType,
   }) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
     final index = _document.blocks.indexWhere((block) => block.id == id);
 
     final newBlock = FilmBlock(
@@ -125,8 +142,38 @@ class ScreenplayEditorController extends ChangeNotifier {
       return;
     }
 
+    _finishTypingGroup();
+    _pushUndoSnapshot();
     _document.blocks.removeAt(index);
     _markDocumentChanged();
+  }
+
+  bool undo() {
+    _finishTypingGroup();
+
+    if (_undoStack.isEmpty) {
+      return false;
+    }
+
+    _redoStack.add(_cloneDocument(_document));
+    _trimHistory(_redoStack);
+    _document = _undoStack.removeLast();
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool redo() {
+    _finishTypingGroup();
+
+    if (_redoStack.isEmpty) {
+      return false;
+    }
+
+    _undoStack.add(_cloneDocument(_document));
+    _trimHistory(_undoStack);
+    _document = _redoStack.removeLast();
+    _markDocumentChanged();
+    return true;
   }
 
   Future<void> saveDocument({bool force = false}) async {
@@ -178,6 +225,57 @@ class ScreenplayEditorController extends ChangeNotifier {
     }
   }
 
+  void _recordTypingHistory(String blockId) {
+    if (_typingBlockId != blockId || _typingGroupTimer == null) {
+      _pushUndoSnapshot();
+      _typingBlockId = blockId;
+    }
+
+    _typingGroupTimer?.cancel();
+    _typingGroupTimer = Timer(
+      _typingGroupDelay,
+      _finishTypingGroup,
+    );
+  }
+
+  void _finishTypingGroup() {
+    _typingGroupTimer?.cancel();
+    _typingGroupTimer = null;
+    _typingBlockId = null;
+  }
+
+  void _pushUndoSnapshot() {
+    _undoStack.add(_cloneDocument(_document));
+    _trimHistory(_undoStack);
+    _redoStack.clear();
+  }
+
+  void _trimHistory(List<FilmDocument> stack) {
+    while (stack.length > _historyLimit) {
+      stack.removeAt(0);
+    }
+  }
+
+  void _clearHistory() {
+    _finishTypingGroup();
+    _undoStack.clear();
+    _redoStack.clear();
+  }
+
+  FilmDocument _cloneDocument(FilmDocument source) {
+    return FilmDocument(
+      blocks: source.blocks
+          .map(
+            (block) => FilmBlock(
+              id: block.id,
+              type: block.type,
+              text: block.text,
+            ),
+          )
+          .toList(growable: true),
+    );
+  }
+
   void _markDocumentChanged() {
     _revision++;
     _isDirty = true;
@@ -220,6 +318,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     _isDisposed = true;
     _periodicSaveTimer?.cancel();
     _debouncedSaveTimer?.cancel();
+    _typingGroupTimer?.cancel();
     super.dispose();
   }
 }

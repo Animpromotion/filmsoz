@@ -32,6 +32,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   bool _isSplittingBlock = false;
   bool _scrollUpdateScheduled = false;
   bool _initialFocusPlaced = false;
+  bool _forceTextSync = false;
   String? _activeSceneId;
 
   @override
@@ -150,7 +151,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
       final hasFocus = _focusNodes[block.id]?.hasFocus ?? false;
 
-      if (!hasFocus && textController.text != block.text) {
+      if ((_forceTextSync || !hasFocus) && textController.text != block.text) {
         textController.value = TextEditingValue(
           text: block.text,
           selection: TextSelection.collapsed(offset: block.text.length),
@@ -177,6 +178,27 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
     final block = _controller.document.blocks[blockIndex];
     final key = event.logicalKey;
+    final isControlPressed = HardwareKeyboard.instance.isControlPressed;
+
+    if (isControlPressed && key == LogicalKeyboardKey.keyZ) {
+      if (HardwareKeyboard.instance.isShiftPressed) {
+        _redo();
+      } else {
+        _undo();
+      }
+
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed && key == LogicalKeyboardKey.keyY) {
+      _redo();
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed && key == LogicalKeyboardKey.keyS) {
+      unawaited(_controller.saveDocument(force: true));
+      return KeyEventResult.handled;
+    }
 
     if ((key == LogicalKeyboardKey.enter ||
             key == LogicalKeyboardKey.numpadEnter) &&
@@ -380,6 +402,86 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
       _focusBlock(previousBlock.id, cursorAtEnd: true);
     });
+  }
+
+  void _undo() {
+    _performHistoryAction(_controller.undo);
+  }
+
+  void _redo() {
+    _performHistoryAction(_controller.redo);
+  }
+
+  void _performHistoryAction(bool Function() action) {
+    final focusedBlockId = _focusedBlockId();
+    final previousBlocks = _controller.document.blocks;
+    final previousIndex = focusedBlockId == null
+        ? -1
+        : previousBlocks.indexWhere((block) => block.id == focusedBlockId);
+    final previousSelection = focusedBlockId == null
+        ? null
+        : _textControllers[focusedBlockId]?.selection;
+
+    _forceTextSync = true;
+    final changed = action();
+    _forceTextSync = false;
+
+    if (!changed) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _controller.document.blocks.isEmpty) {
+        return;
+      }
+
+      final blocks = _controller.document.blocks;
+      final existingIndex = focusedBlockId == null
+          ? -1
+          : blocks.indexWhere((block) => block.id == focusedBlockId);
+      final String targetId;
+
+      if (existingIndex >= 0) {
+        targetId = blocks[existingIndex].id;
+      } else {
+        final safeIndex = previousIndex < 0
+            ? 0
+            : previousIndex.clamp(0, blocks.length - 1).toInt();
+        targetId = blocks[safeIndex].id;
+      }
+
+      final textController = _textControllers[targetId];
+      final focusNode = _focusNodes[targetId];
+
+      if (textController == null || focusNode == null) {
+        return;
+      }
+
+      focusNode.requestFocus();
+
+      var cursorOffset = textController.text.length;
+
+      if (previousSelection != null && previousSelection.isValid) {
+        cursorOffset = previousSelection.extentOffset
+            .clamp(0, textController.text.length)
+            .toInt();
+      }
+
+      textController.selection = TextSelection.collapsed(
+        offset: cursorOffset,
+      );
+      _activateSceneForBlock(targetId);
+    });
+  }
+
+  String? _focusedBlockId() {
+    for (final entry in _focusNodes.entries) {
+      if (entry.value.hasFocus) {
+        return entry.key;
+      }
+    }
+
+    return null;
   }
 
   void _focusBlock(
@@ -597,6 +699,19 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           LogicalKeyboardKey.keyS,
           control: true,
         ): () => unawaited(_controller.saveDocument(force: true)),
+        const SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: true,
+        ): _undo,
+        const SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: true,
+          shift: true,
+        ): _redo,
+        const SingleActivator(
+          LogicalKeyboardKey.keyY,
+          control: true,
+        ): _redo,
       },
       child: Stack(
         children: [
@@ -607,7 +722,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   onSave: () => unawaited(
                     _controller.saveDocument(force: true),
                   ),
+                  onUndo: _undo,
+                  onRedo: _redo,
                   isSaving: _controller.isSaving,
+                  canUndo: _controller.canUndo,
+                  canRedo: _controller.canRedo,
                 ),
                 Expanded(
                   child: Row(
@@ -687,7 +806,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                         message: _controller.storagePath ??
                             'Путь будет определён после запуска',
                         child: Text(
-                          '${_saveStatusText()}  •  Ctrl+S',
+                          '${_saveStatusText()}  •  Ctrl+S  •  Ctrl+Z / Ctrl+Y',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
