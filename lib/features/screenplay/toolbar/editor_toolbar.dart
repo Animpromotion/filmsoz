@@ -22,6 +22,7 @@ class EditorToolbar extends StatelessWidget {
   final String projectName;
   final bool isDirty;
   final List<String> recentProjects;
+
   final VoidCallback onNewProject;
   final VoidCallback onOpenProject;
   final ValueChanged<String> onOpenRecentProject;
@@ -29,6 +30,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onSaveAs;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
+
   final bool isSaving;
   final bool canUndo;
   final bool canRedo;
@@ -120,12 +122,19 @@ class EditorToolbar extends StatelessWidget {
                 ? const SizedBox(
                     width: 13,
                     height: 13,
-                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                    ),
                   )
-                : const Icon(Icons.save_outlined, size: 16),
+                : const Icon(
+                    Icons.save_outlined,
+                    size: 16,
+                  ),
             label: Text(
               isSaving ? 'Сохранение...' : 'Сохранить',
-              style: const TextStyle(fontSize: 12),
+              style: const TextStyle(
+                fontSize: 12,
+              ),
             ),
           ),
         ],
@@ -142,15 +151,19 @@ class EditorToolbar extends StatelessWidget {
           case _FileMenuAction.newProject:
             onNewProject();
             break;
+
           case _FileMenuAction.openProject:
             onOpenProject();
             break;
+
           case _FileMenuAction.saveProject:
             onSave();
             break;
+
           case _FileMenuAction.saveAsProject:
             onSaveAs();
             break;
+
           case _FileMenuAction.openRecentProject:
             final recentPath = selection.recentPath;
 
@@ -163,7 +176,9 @@ class EditorToolbar extends StatelessWidget {
       itemBuilder: (context) {
         final entries = <PopupMenuEntry<_FileMenuSelection>>[
           const PopupMenuItem<_FileMenuSelection>(
-            value: _FileMenuSelection(_FileMenuAction.newProject),
+            value: _FileMenuSelection(
+              _FileMenuAction.newProject,
+            ),
             child: _MenuRow(
               icon: Icons.note_add_outlined,
               label: 'Новый сценарий',
@@ -171,7 +186,9 @@ class EditorToolbar extends StatelessWidget {
             ),
           ),
           const PopupMenuItem<_FileMenuSelection>(
-            value: _FileMenuSelection(_FileMenuAction.openProject),
+            value: _FileMenuSelection(
+              _FileMenuAction.openProject,
+            ),
             child: _MenuRow(
               icon: Icons.folder_open_outlined,
               label: 'Открыть...',
@@ -180,7 +197,9 @@ class EditorToolbar extends StatelessWidget {
           ),
           const PopupMenuDivider(),
           const PopupMenuItem<_FileMenuSelection>(
-            value: _FileMenuSelection(_FileMenuAction.saveProject),
+            value: _FileMenuSelection(
+              _FileMenuAction.saveProject,
+            ),
             child: _MenuRow(
               icon: Icons.save_outlined,
               label: 'Сохранить',
@@ -188,7 +207,9 @@ class EditorToolbar extends StatelessWidget {
             ),
           ),
           const PopupMenuItem<_FileMenuSelection>(
-            value: _FileMenuSelection(_FileMenuAction.saveAsProject),
+            value: _FileMenuSelection(
+              _FileMenuAction.saveAsProject,
+            ),
             child: _MenuRow(
               icon: Icons.save_as_outlined,
               label: 'Сохранить как...',
@@ -198,7 +219,10 @@ class EditorToolbar extends StatelessWidget {
         ];
 
         if (recentProjects.isNotEmpty) {
-          entries.add(const PopupMenuDivider());
+          entries.add(
+            const PopupMenuDivider(),
+          );
+
           entries.add(
             const PopupMenuItem<_FileMenuSelection>(
               enabled: false,
@@ -218,7 +242,9 @@ class EditorToolbar extends StatelessWidget {
           for (final recentPath in recentProjects.take(5)) {
             entries.add(
               PopupMenuItem<_FileMenuSelection>(
-                value: _FileMenuSelection.recent(recentPath),
+                value: _FileMenuSelection.recent(
+                  recentPath,
+                ),
                 child: Tooltip(
                   message: recentPath,
                   child: Row(
@@ -231,7 +257,9 @@ class EditorToolbar extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          path.basenameWithoutExtension(recentPath),
+                          path.basenameWithoutExtension(
+                            recentPath,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -274,7 +302,10 @@ class EditorToolbar extends StatelessWidget {
     return IconButton(
       onPressed: onPressed,
       tooltip: tooltip,
-      icon: Icon(icon, size: 17),
+      icon: Icon(
+        icon,
+        size: 17,
+      ),
       padding: const EdgeInsets.all(6),
       constraints: const BoxConstraints(
         minWidth: 30,
@@ -317,7 +348,7 @@ enum _FileMenuAction {
 }
 
 class _FileMenuSelection {
-  const _FileMenuSelection(this.action, {this.recentPath});
+  const _FileMenuSelection(this.action) : recentPath = null;
 
   const _FileMenuSelection.recent(String path)
       : action = _FileMenuAction.openRecentProject,
