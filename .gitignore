@@ -51,3 +51,5 @@ app.*.map.json
 /filmsoz_snapshot_*.zip
 /lib_backup_*/
 /filmsoz_patch_*/
+
+/filmsoz_*_source.zip
