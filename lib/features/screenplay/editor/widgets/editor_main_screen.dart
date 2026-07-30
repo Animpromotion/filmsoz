@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
+import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/controller/screenplay_editor_controller.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_block_widget.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sheet.dart';
@@ -39,6 +40,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   final Map<String, FocusNode> _focusNodes = {};
   final Map<String, GlobalKey> _blockKeys = {};
   final Set<String> _selectedBlockIds = <String>{};
+  final Set<String> _collapsedSceneIds = <String>{};
 
   List<FilmBlock> _blockClipboard = const <FilmBlock>[];
   String? _draggingBlockId;
@@ -124,10 +126,13 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     }
 
     final sceneIds =
-        _controller.document.scenes.map((scene) => scene.id).toSet();
+        _controller.document.sceneSections.map((scene) => scene.id).toSet();
+    _collapsedSceneIds.removeWhere(
+      (sceneId) => !sceneIds.contains(sceneId),
+    );
 
     if (_activeSceneId != null && !sceneIds.contains(_activeSceneId)) {
-      _activeSceneId = _controller.document.scenes.firstOrNull?.id;
+      _activeSceneId = _controller.document.sceneSections.firstOrNull?.id;
     }
 
     if (_controller.isInitialized) {
@@ -659,6 +664,13 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     required int offset,
   }) {
     final selectedIds = _selectedIdsInDocumentOrder();
+    final activeBlock = _findBlockById(activeBlockId);
+
+    if (selectedIds.isEmpty && activeBlock?.type == BlockType.sceneHeading) {
+      _moveScene(activeBlockId, offset);
+      return;
+    }
+
     final movedIds =
         selectedIds.isEmpty ? <String>[activeBlockId] : selectedIds;
     final result = _controller.moveBlocksByOffset(
@@ -859,6 +871,20 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   }
 
   Widget _buildDragHandle(FilmBlock block) {
+    if (block.type == BlockType.sceneHeading) {
+      return const Tooltip(
+        message: 'Сцену можно перетащить в навигаторе слева',
+        child: Padding(
+          padding: EdgeInsets.only(top: 8, right: 4),
+          child: Icon(
+            Icons.view_agenda_outlined,
+            size: 17,
+            color: Color(0xFFE5A93C),
+          ),
+        ),
+      );
+    }
+
     final selectedCount =
         _selectedBlockIds.contains(block.id) ? _selectedBlockIds.length : 1;
 
@@ -920,7 +946,108 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     );
   }
 
-  Widget _buildSelectableBlock(FilmBlock block) {
+  Widget _buildSceneInlineToolbar(SceneSection scene) {
+    final isCollapsed = _collapsedSceneIds.contains(scene.id);
+    final sceneCount = _controller.document.sceneSections.length;
+
+    return Container(
+      height: 34,
+      margin: const EdgeInsets.only(top: 8, bottom: 2),
+      padding: const EdgeInsets.only(left: 8, right: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F1E5),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: const Color(0xFFE7D6B5)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE5A93C),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              'СЦЕНА ${scene.number}',
+              style: const TextStyle(
+                color: Color(0xFF211A0D),
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${scene.blockCount} блоков • ${scene.wordCount} слов • '
+              '${scene.characterCount} символов'
+              '${isCollapsed ? ' • СВЕРНУТА' : ''}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF6E6047),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: isCollapsed ? 'Развернуть сцену' : 'Свернуть сцену',
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            padding: EdgeInsets.zero,
+            onPressed: () => _toggleSceneCollapsed(scene.id),
+            icon: Icon(
+              isCollapsed
+                  ? Icons.unfold_more_rounded
+                  : Icons.unfold_less_rounded,
+              size: 17,
+              color: const Color(0xFF6E6047),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Переместить сцену выше',
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            padding: EdgeInsets.zero,
+            onPressed: scene.number > 1 ? () => _moveScene(scene.id, -1) : null,
+            icon: const Icon(Icons.arrow_upward, size: 16),
+          ),
+          IconButton(
+            tooltip: 'Переместить сцену ниже',
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            padding: EdgeInsets.zero,
+            onPressed: scene.number < sceneCount
+                ? () => _moveScene(scene.id, 1)
+                : null,
+            icon: const Icon(Icons.arrow_downward, size: 16),
+          ),
+          IconButton(
+            tooltip: 'Дублировать сцену',
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            padding: EdgeInsets.zero,
+            onPressed: () => _duplicateScene(scene.id),
+            icon: const Icon(Icons.copy_all_outlined, size: 16),
+          ),
+          IconButton(
+            tooltip: 'Удалить сцену',
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            padding: EdgeInsets.zero,
+            onPressed: () => unawaited(_deleteScene(scene.id)),
+            icon: const Icon(
+              Icons.delete_outline,
+              size: 16,
+              color: Color(0xFFB85050),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectableBlock(
+    FilmBlock block, {
+    SceneSection? scene,
+  }) {
     final isSelected = _selectedBlockIds.contains(block.id);
     final isDropTarget = _dragHoverTargetId == block.id;
     final draggedIds = _draggingBlockId == null
@@ -999,16 +1126,22 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                           ),
                         ),
                       ),
-                      child: ScriptBlockWidget(
-                        block: block,
-                        textController: _textControllers[block.id]!,
-                        focusNode: _focusNodes[block.id]!,
-                        onChanged: (text) => _handleTextChanged(
-                          block.id,
-                          text,
-                        ),
-                        nextBlockHint:
-                            _editingFlowService.nextBlockHint(block.type),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (scene != null) _buildSceneInlineToolbar(scene),
+                          ScriptBlockWidget(
+                            block: block,
+                            textController: _textControllers[block.id]!,
+                            focusNode: _focusNodes[block.id]!,
+                            onChanged: (text) => _handleTextChanged(
+                              block.id,
+                              text,
+                            ),
+                            nextBlockHint:
+                                _editingFlowService.nextBlockHint(block.type),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1697,6 +1830,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     FocusManager.instance.primaryFocus?.unfocus();
     _stopDragAutoScroll();
     _selectedBlockIds.clear();
+    _collapsedSceneIds.clear();
     _selectionAnchorId = null;
     _draggingBlockId = null;
     _dragHoverTargetId = null;
@@ -1880,7 +2014,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     });
   }
 
-  FilmBlock? _findSceneForBlock(String blockId) {
+  SceneSection? _findSceneForBlock(String blockId) {
     final blocks = _controller.document.blocks;
     final blockIndex = blocks.indexWhere((block) => block.id == blockId);
 
@@ -1888,18 +2022,216 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       return null;
     }
 
-    for (var index = blockIndex; index >= 0; index--) {
-      final block = blocks[index];
-
-      if (block.type == BlockType.sceneHeading) {
-        return block;
+    for (final scene in _controller.document.sceneSections) {
+      if (blockIndex >= scene.startIndex &&
+          blockIndex < scene.endIndexExclusive) {
+        return scene;
       }
     }
 
-    return _controller.document.scenes.firstOrNull;
+    return _controller.document.sceneSections.firstOrNull;
   }
 
-  Future<void> _selectScene(FilmBlock scene) async {
+  void _toggleSceneCollapsed(String sceneId) {
+    final scene = _controller.document.sceneById(sceneId);
+
+    if (scene == null) {
+      return;
+    }
+
+    final shouldCollapse = !_collapsedSceneIds.contains(sceneId);
+    final focusedBlockId = _focusedBlockId();
+    final focusedInsideScene = focusedBlockId != null &&
+        scene.blockIds.contains(focusedBlockId) &&
+        focusedBlockId != scene.id;
+
+    setState(() {
+      if (shouldCollapse) {
+        _collapsedSceneIds.add(sceneId);
+        final hiddenIds = scene.blocks.skip(1).map((block) => block.id).toSet();
+        _selectedBlockIds.removeWhere(hiddenIds.contains);
+
+        if (_selectionAnchorId != null &&
+            hiddenIds.contains(_selectionAnchorId)) {
+          _selectionAnchorId = scene.id;
+        }
+      } else {
+        _collapsedSceneIds.remove(sceneId);
+      }
+    });
+
+    if (shouldCollapse && focusedInsideScene) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _focusBlock(scene.id, cursorAtEnd: true);
+        }
+      });
+    }
+  }
+
+  void _moveScene(String sceneId, int offset) {
+    final result = _controller.moveSceneByOffset(
+      sceneId: sceneId,
+      offset: offset,
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _activeSceneId = result.sceneId;
+      _selectedBlockIds.clear();
+      _selectionAnchorId = null;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _revealBlock(result.sceneId);
+      _showOperationMessage(
+        'Сцена перемещена на позицию ${result.sceneNumber}',
+      );
+    });
+  }
+
+  void _dropScene(
+    String sceneId,
+    String targetSceneId,
+    bool placeAfter,
+  ) {
+    final result = _controller.moveSceneRelativeToTarget(
+      sceneId: sceneId,
+      targetSceneId: targetSceneId,
+      placeAfter: placeAfter,
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _activeSceneId = result.sceneId;
+      _selectedBlockIds.clear();
+      _selectionAnchorId = null;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _revealBlock(result.sceneId);
+      _showOperationMessage(
+        'Сцена перемещена на позицию ${result.sceneNumber}',
+      );
+    });
+  }
+
+  void _duplicateScene(String sceneId) {
+    final result = _controller.duplicateScene(sceneId);
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _activeSceneId = result.sceneId;
+      _selectedBlockIds.clear();
+      _selectionAnchorId = null;
+      _collapsedSceneIds.remove(result.sceneId);
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlock(result.sceneId, cursorAtEnd: true);
+      _showOperationMessage(
+        'Создана копия сцены ${result.sceneNumber}',
+      );
+    });
+  }
+
+  Future<void> _deleteScene(String sceneId) async {
+    final scene = _controller.document.sceneById(sceneId);
+
+    if (scene == null || !mounted) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Удалить сцену ${scene.number}?'),
+          content: Text(
+            '${scene.title}\n\n'
+            'Будут удалены ${scene.blockCount} блоков. '
+            'Действие можно отменить через Ctrl+Z.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: () => Navigator.of(context).pop(true),
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Удалить'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    final result = _controller.deleteScene(sceneId);
+
+    if (result == null) {
+      return;
+    }
+
+    setState(() {
+      _collapsedSceneIds.remove(sceneId);
+      _selectedBlockIds.clear();
+      _selectionAnchorId = null;
+      _activeSceneId = result.activeSceneId;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlock(result.focusBlockId, cursorAtEnd: true);
+      _showOperationMessage('Сцена удалена');
+    });
+  }
+
+  Set<String> _hiddenBlockIdsForCollapsedScenes(
+    List<SceneSection> scenes,
+  ) {
+    final hiddenIds = <String>{};
+
+    for (final scene in scenes) {
+      if (_collapsedSceneIds.contains(scene.id)) {
+        hiddenIds.addAll(
+          scene.blocks.skip(1).map((block) => block.id),
+        );
+      }
+    }
+
+    return hiddenIds;
+  }
+
+  Future<void> _selectScene(SceneSection scene) async {
     if (mounted && _activeSceneId != scene.id) {
       setState(() {
         _activeSceneId = scene.id;
@@ -1956,13 +2288,13 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     }
 
     final viewportTop = scrollAreaBox.localToGlobal(Offset.zero).dy + 72;
-    final scenes = _controller.document.scenes;
+    final scenes = _controller.document.sceneSections;
 
     if (scenes.isEmpty) {
       return;
     }
 
-    FilmBlock candidate = scenes.first;
+    SceneSection candidate = scenes.first;
 
     for (final scene in scenes) {
       final sceneContext = _blockKeys[scene.id]?.currentContext;
@@ -2046,8 +2378,14 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
   @override
   Widget build(BuildContext context) {
-    final scenes = _controller.document.scenes;
-    final activeScene = _findBlockById(_activeSceneId);
+    final scenes = _controller.document.sceneSections;
+    final hiddenBlockIds = _hiddenBlockIdsForCollapsedScenes(scenes);
+    final sceneByHeadingId = <String, SceneSection>{
+      for (final scene in scenes) scene.id: scene,
+    };
+    final activeScene = _activeSceneId == null
+        ? null
+        : _controller.document.sceneById(_activeSceneId!);
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -2160,7 +2498,15 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                       SceneNavigator(
                         scenes: scenes,
                         selectedSceneId: _activeSceneId,
+                        collapsedSceneIds: _collapsedSceneIds,
                         onSceneSelected: _selectScene,
+                        onToggleSceneCollapsed: _toggleSceneCollapsed,
+                        onMoveScene: _moveScene,
+                        onDuplicateScene: _duplicateScene,
+                        onDeleteScene: (sceneId) {
+                          unawaited(_deleteScene(sceneId));
+                        },
+                        onSceneDropped: _dropScene,
                       ),
                       const VerticalDivider(width: 1),
                       Expanded(
@@ -2189,7 +2535,13 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                                           children: [
                                             for (final block
                                                 in _controller.document.blocks)
-                                              _buildSelectableBlock(block),
+                                              if (!hiddenBlockIds
+                                                  .contains(block.id))
+                                                _buildSelectableBlock(
+                                                  block,
+                                                  scene: sceneByHeadingId[
+                                                      block.id],
+                                                ),
                                           ],
                                         ),
                                       ),
@@ -2215,7 +2567,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                           'Сцен: ${scenes.length}  •  '
                           'Блоков: ${_controller.document.blocks.length}'
                           '${_selectedBlockIds.isEmpty ? '' : '  •  Выбрано: ${_selectedBlockIds.length}'}  •  '
-                          'Активная: ${activeScene?.text.trim().isNotEmpty == true ? activeScene!.text : 'БЕЗ НАЗВАНИЯ'}',
+                          'Активная: ${activeScene == null ? '—' : '${activeScene.number}. ${activeScene.title}'}'
+                          '${activeScene == null ? '' : '  •  ${activeScene.wordCount} слов'}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

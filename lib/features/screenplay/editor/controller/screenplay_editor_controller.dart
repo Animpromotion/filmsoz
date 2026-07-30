@@ -50,6 +50,40 @@ class BlockMoveResult {
   final int firstIndex;
 }
 
+class SceneMoveResult {
+  const SceneMoveResult({
+    required this.sceneId,
+    required this.sceneNumber,
+    required this.blockIds,
+  });
+
+  final String sceneId;
+  final int sceneNumber;
+  final List<String> blockIds;
+}
+
+class SceneDuplicateResult {
+  const SceneDuplicateResult({
+    required this.sceneId,
+    required this.sceneNumber,
+    required this.blockIds,
+  });
+
+  final String sceneId;
+  final int sceneNumber;
+  final List<String> blockIds;
+}
+
+class SceneDeletionResult {
+  const SceneDeletionResult({
+    required this.focusBlockId,
+    required this.activeSceneId,
+  });
+
+  final String focusBlockId;
+  final String? activeSceneId;
+}
+
 class ScreenplayEditorController extends ChangeNotifier {
   ScreenplayEditorController({LocalStorageService? storageService})
       : _storageService = storageService ?? LocalStorageService();
@@ -345,7 +379,9 @@ class ScreenplayEditorController extends ChangeNotifier {
         .map((block) => block.id)
         .toSet();
 
-    if (selectedIds.isEmpty || offset == 0) {
+    if (selectedIds.isEmpty ||
+        offset == 0 ||
+        _containsSceneHeading(selectedIds)) {
       return null;
     }
 
@@ -402,7 +438,9 @@ class ScreenplayEditorController extends ChangeNotifier {
         .map((block) => block.id)
         .toSet();
 
-    if (selectedIds.isEmpty || selectedIds.contains(targetBlockId)) {
+    if (selectedIds.isEmpty ||
+        selectedIds.contains(targetBlockId) ||
+        _containsSceneHeading(selectedIds)) {
       return null;
     }
 
@@ -442,6 +480,199 @@ class ScreenplayEditorController extends ChangeNotifier {
     );
   }
 
+  SceneMoveResult? moveSceneByOffset({
+    required String sceneId,
+    required int offset,
+  }) {
+    final sceneGroups = _sceneGroups();
+    final sceneIndex = sceneGroups.indexWhere(
+      (group) => group.first.id == sceneId,
+    );
+
+    if (sceneIndex == -1 || offset == 0) {
+      return null;
+    }
+
+    final targetIndex = sceneIndex + (offset < 0 ? -1 : 1);
+
+    if (targetIndex < 0 || targetIndex >= sceneGroups.length) {
+      return null;
+    }
+
+    final movedGroup = sceneGroups.removeAt(sceneIndex);
+    sceneGroups.insert(targetIndex, movedGroup);
+
+    return _applySceneOrder(
+      sceneGroups: sceneGroups,
+      movedSceneId: sceneId,
+    );
+  }
+
+  SceneMoveResult? moveSceneRelativeToTarget({
+    required String sceneId,
+    required String targetSceneId,
+    required bool placeAfter,
+  }) {
+    if (sceneId == targetSceneId) {
+      return null;
+    }
+
+    final sceneGroups = _sceneGroups();
+    final sourceIndex = sceneGroups.indexWhere(
+      (group) => group.first.id == sceneId,
+    );
+
+    if (sourceIndex == -1) {
+      return null;
+    }
+
+    final movedGroup = sceneGroups.removeAt(sourceIndex);
+    final targetIndex = sceneGroups.indexWhere(
+      (group) => group.first.id == targetSceneId,
+    );
+
+    if (targetIndex == -1) {
+      return null;
+    }
+
+    final insertionIndex = targetIndex + (placeAfter ? 1 : 0);
+    sceneGroups.insert(insertionIndex, movedGroup);
+
+    return _applySceneOrder(
+      sceneGroups: sceneGroups,
+      movedSceneId: sceneId,
+    );
+  }
+
+  SceneDuplicateResult? duplicateScene(String sceneId) {
+    final scenes = _document.sceneSections;
+    final sourceIndex = scenes.indexWhere((scene) => scene.id == sceneId);
+
+    if (sourceIndex == -1) {
+      return null;
+    }
+
+    final sourceScene = scenes[sourceIndex];
+    final duplicatedBlocks = sourceScene.blocks
+        .map(
+          (block) => FilmBlock(
+            id: _generateBlockId(),
+            type: block.type,
+            text: block.text,
+          ),
+        )
+        .toList(growable: false);
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.blocks.insertAll(
+      sourceScene.endIndexExclusive,
+      duplicatedBlocks,
+    );
+    _markDocumentChanged();
+
+    final duplicatedScene = _document.sceneById(duplicatedBlocks.first.id);
+
+    return SceneDuplicateResult(
+      sceneId: duplicatedBlocks.first.id,
+      sceneNumber: duplicatedScene?.number ?? sourceScene.number + 1,
+      blockIds:
+          duplicatedBlocks.map((block) => block.id).toList(growable: false),
+    );
+  }
+
+  SceneDeletionResult? deleteScene(String sceneId) {
+    final scenes = _document.sceneSections;
+    final sceneIndex = scenes.indexWhere((scene) => scene.id == sceneId);
+
+    if (sceneIndex == -1) {
+      return null;
+    }
+
+    final scene = scenes[sceneIndex];
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.blocks.removeRange(
+      scene.startIndex,
+      scene.endIndexExclusive,
+    );
+
+    if (_document.sceneSections.isEmpty) {
+      _document.blocks.add(
+        FilmBlock(
+          id: _generateBlockId(),
+          type: BlockType.sceneHeading,
+          text: 'ИНТ. НОВАЯ СЦЕНА - ДЕНЬ',
+        ),
+      );
+    }
+
+    final remainingScenes = _document.sceneSections;
+    final targetScene = remainingScenes.isEmpty
+        ? null
+        : remainingScenes[
+            sceneIndex.clamp(0, remainingScenes.length - 1).toInt()];
+    final focusBlock = targetScene?.heading ?? _document.blocks.first;
+
+    _markDocumentChanged();
+
+    return SceneDeletionResult(
+      focusBlockId: focusBlock.id,
+      activeSceneId: targetScene?.id,
+    );
+  }
+
+  List<List<FilmBlock>> _sceneGroups() {
+    return _document.sceneSections
+        .map((scene) => List<FilmBlock>.of(scene.blocks))
+        .toList(growable: true);
+  }
+
+  List<FilmBlock> _blocksBeforeFirstScene() {
+    final scenes = _document.sceneSections;
+
+    if (scenes.isEmpty || scenes.first.startIndex == 0) {
+      return <FilmBlock>[];
+    }
+
+    return List<FilmBlock>.of(
+      _document.blocks.sublist(0, scenes.first.startIndex),
+    );
+  }
+
+  SceneMoveResult? _applySceneOrder({
+    required List<List<FilmBlock>> sceneGroups,
+    required String movedSceneId,
+  }) {
+    final prefixBlocks = _blocksBeforeFirstScene();
+    final nextBlocks = <FilmBlock>[
+      ...prefixBlocks,
+      for (final group in sceneGroups) ...group,
+    ];
+    final currentOrder = _document.blocks.map((block) => block.id).toList();
+    final nextOrder = nextBlocks.map((block) => block.id).toList();
+
+    if (_sameBlockOrder(currentOrder, nextOrder)) {
+      return null;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.blocks
+      ..clear()
+      ..addAll(nextBlocks);
+    _markDocumentChanged();
+
+    final movedScene = _document.sceneById(movedSceneId)!;
+
+    return SceneMoveResult(
+      sceneId: movedSceneId,
+      sceneNumber: movedScene.number,
+      blockIds: movedScene.blockIds,
+    );
+  }
+
   BlockMoveResult _applyMovedBlockOrder({
     required List<FilmBlock> nextBlocks,
     required Set<String> movedIds,
@@ -471,6 +702,13 @@ class ScreenplayEditorController extends ChangeNotifier {
       firstIndex: nextBlocks.indexWhere(
         (block) => movedIds.contains(block.id),
       ),
+    );
+  }
+
+  bool _containsSceneHeading(Set<String> blockIds) {
+    return _document.blocks.any(
+      (block) =>
+          blockIds.contains(block.id) && block.type == BlockType.sceneHeading,
     );
   }
 

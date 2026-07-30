@@ -1,5 +1,6 @@
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
+import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
 
 class FilmDocument {
   final List<FilmBlock> blocks;
@@ -18,10 +19,53 @@ class FilmDocument {
     );
   }
 
+  List<SceneSection> get sceneSections {
+    final headingIndexes = <int>[];
+
+    for (var index = 0; index < blocks.length; index++) {
+      if (blocks[index].type == BlockType.sceneHeading) {
+        headingIndexes.add(index);
+      }
+    }
+
+    final sections = <SceneSection>[];
+
+    for (var sceneIndex = 0; sceneIndex < headingIndexes.length; sceneIndex++) {
+      final startIndex = headingIndexes[sceneIndex];
+      final endIndexExclusive = sceneIndex + 1 < headingIndexes.length
+          ? headingIndexes[sceneIndex + 1]
+          : blocks.length;
+      final sceneBlocks =
+          blocks.sublist(startIndex, endIndexExclusive).toList(growable: false);
+
+      sections.add(
+        SceneSection(
+          number: sceneIndex + 1,
+          startIndex: startIndex,
+          endIndexExclusive: endIndexExclusive,
+          heading: sceneBlocks.first,
+          blocks: sceneBlocks,
+        ),
+      );
+    }
+
+    return sections;
+  }
+
   List<FilmBlock> get scenes {
-    return blocks
-        .where((block) => block.type == BlockType.sceneHeading)
+    return sceneSections
+        .map((section) => section.heading)
         .toList(growable: false);
+  }
+
+  SceneSection? sceneById(String sceneId) {
+    for (final scene in sceneSections) {
+      if (scene.id == sceneId) {
+        return scene;
+      }
+    }
+
+    return null;
   }
 
   Map<String, dynamic> toJson() {
