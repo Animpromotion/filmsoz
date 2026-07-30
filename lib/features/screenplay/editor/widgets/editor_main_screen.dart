@@ -9,6 +9,7 @@ import 'package:filmsoz_studio/features/screenplay/editor/controller/screenplay_
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_block_widget.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sheet.dart';
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
+import 'package:filmsoz_studio/features/screenplay/storage/project_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/toolbar/editor_toolbar.dart';
 
 class EditorMainScreen extends StatefulWidget {
@@ -21,6 +22,7 @@ class EditorMainScreen extends StatefulWidget {
 class _EditorMainScreenState extends State<EditorMainScreen>
     with WidgetsBindingObserver {
   late final ScreenplayEditorController _controller;
+  final ProjectFileService _projectFileService = const ProjectFileService();
 
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollAreaKey = GlobalKey();
@@ -34,6 +36,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
   bool _initialFocusPlaced = false;
   bool _forceTextSync = false;
   String? _activeSceneId;
+  List<String> _recentProjects = const <String>[];
 
   @override
   void initState() {
@@ -51,10 +54,15 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
   Future<void> _initializeEditor() async {
     await _controller.initialize();
+    final recentProjects = await _projectFileService.loadRecentProjects();
 
     if (!mounted) {
       return;
     }
+
+    setState(() {
+      _recentProjects = recentProjects;
+    });
 
     _syncEditors();
     _placeInitialFocus();
@@ -195,8 +203,23 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       return KeyEventResult.handled;
     }
 
+    if (isControlPressed && key == LogicalKeyboardKey.keyN) {
+      unawaited(_newProject());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed && key == LogicalKeyboardKey.keyO) {
+      unawaited(_openProject());
+      return KeyEventResult.handled;
+    }
+
     if (isControlPressed && key == LogicalKeyboardKey.keyS) {
-      unawaited(_controller.saveDocument(force: true));
+      if (HardwareKeyboard.instance.isShiftPressed) {
+        unawaited(_saveProjectAs());
+      } else {
+        unawaited(_saveProject());
+      }
+
       return KeyEventResult.handled;
     }
 
@@ -402,6 +425,232 @@ class _EditorMainScreenState extends State<EditorMainScreen>
 
       _focusBlock(previousBlock.id, cursorAtEnd: true);
     });
+  }
+
+  Future<void> _newProject() async {
+    final canContinue = await _confirmDiscardChanges(
+      actionName: 'созданием нового сценария',
+    );
+
+    if (!canContinue || !mounted) {
+      return;
+    }
+
+    _prepareDocumentReplacement();
+    _controller.createNewProject();
+    _finishDocumentReplacement();
+  }
+
+  Future<void> _openProject() async {
+    final canContinue = await _confirmDiscardChanges(
+      actionName: 'открытием другого проекта',
+    );
+
+    if (!canContinue || !mounted) {
+      return;
+    }
+
+    final selectedPath = await _projectFileService.chooseOpenProject();
+
+    if (selectedPath == null || !mounted) {
+      return;
+    }
+
+    await _openProjectPath(selectedPath);
+  }
+
+  Future<void> _openRecentProject(String projectPath) async {
+    final canContinue = await _confirmDiscardChanges(
+      actionName: 'открытием другого проекта',
+    );
+
+    if (!canContinue || !mounted) {
+      return;
+    }
+
+    await _openProjectPath(projectPath);
+  }
+
+  Future<void> _openProjectPath(String projectPath) async {
+    _prepareDocumentReplacement();
+
+    final opened = await _controller.openProjectFromPath(projectPath);
+
+    if (!mounted) {
+      return;
+    }
+
+    _finishDocumentReplacement();
+
+    if (opened) {
+      await _rememberProject(projectPath);
+    } else {
+      await _showProjectError(
+        fallbackMessage: 'Не удалось открыть проект.',
+      );
+    }
+  }
+
+  Future<bool> _saveProject() async {
+    if (!_controller.hasProjectPath) {
+      return _saveProjectAs();
+    }
+
+    final saved = await _controller.saveCurrentProject();
+
+    if (!mounted) {
+      return saved;
+    }
+
+    if (saved) {
+      final projectPath = _controller.projectPath;
+
+      if (projectPath != null) {
+        await _rememberProject(projectPath);
+      }
+    } else {
+      await _showProjectError(
+        fallbackMessage: 'Не удалось сохранить проект.',
+      );
+    }
+
+    return saved;
+  }
+
+  Future<bool> _saveProjectAs() async {
+    final selectedPath = await _projectFileService.chooseSaveProject(
+      suggestedName: _controller.projectName,
+    );
+
+    if (selectedPath == null || !mounted) {
+      return false;
+    }
+
+    final saved = await _controller.saveProjectToPath(selectedPath);
+
+    if (!mounted) {
+      return saved;
+    }
+
+    if (saved) {
+      final projectPath = _controller.projectPath;
+
+      if (projectPath != null) {
+        await _rememberProject(projectPath);
+      }
+    } else {
+      await _showProjectError(
+        fallbackMessage: 'Не удалось сохранить проект.',
+      );
+    }
+
+    return saved;
+  }
+
+  Future<bool> _confirmDiscardChanges({
+    required String actionName,
+  }) async {
+    if (!_controller.isDirty) {
+      return true;
+    }
+
+    final choice = await showDialog<_UnsavedChangesChoice>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Есть несохранённые изменения'),
+          content: Text(
+            'Перед $actionName сохранить текущий сценарий в файл проекта?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(_UnsavedChangesChoice.cancel);
+              },
+              child: const Text('Отмена'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(_UnsavedChangesChoice.discard);
+              },
+              child: const Text('Не сохранять'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop(_UnsavedChangesChoice.save);
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
+        );
+      },
+    );
+
+    switch (choice) {
+      case _UnsavedChangesChoice.save:
+        return _saveProject();
+      case _UnsavedChangesChoice.discard:
+        return true;
+      case _UnsavedChangesChoice.cancel:
+      case null:
+        return false;
+    }
+  }
+
+  Future<void> _rememberProject(String projectPath) async {
+    final recentProjects = await _projectFileService.rememberProject(
+      projectPath,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _recentProjects = recentProjects;
+    });
+  }
+
+  Future<void> _showProjectError({
+    required String fallbackMessage,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Filmsoz Studio'),
+          content: Text(_controller.lastError ?? fallbackMessage),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Понятно'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _prepareDocumentReplacement() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    _initialFocusPlaced = false;
+    _activeSceneId = null;
+    _forceTextSync = true;
+  }
+
+  void _finishDocumentReplacement() {
+    _forceTextSync = false;
+    _syncEditors();
+    _placeInitialFocus();
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _undo() {
@@ -672,7 +921,19 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     }
 
     if (_controller.isDirty) {
-      return 'Есть несохранённые изменения';
+      return _controller.hasProjectPath
+          ? 'Изменения автосохранены • файл проекта не обновлён'
+          : 'Автосохранено • проект ещё не сохранён';
+    }
+
+    final lastProjectSavedAt = _controller.lastProjectSavedAt;
+
+    if (lastProjectSavedAt != null) {
+      final hours = lastProjectSavedAt.hour.toString().padLeft(2, '0');
+      final minutes = lastProjectSavedAt.minute.toString().padLeft(2, '0');
+      final seconds = lastProjectSavedAt.second.toString().padLeft(2, '0');
+
+      return 'Проект сохранён в $hours:$minutes:$seconds';
     }
 
     final lastSavedAt = _controller.lastSavedAt;
@@ -685,7 +946,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     final minutes = lastSavedAt.minute.toString().padLeft(2, '0');
     final seconds = lastSavedAt.second.toString().padLeft(2, '0');
 
-    return 'Сохранено в $hours:$minutes:$seconds';
+    return 'Автосохранено в $hours:$minutes:$seconds';
   }
 
   @override
@@ -696,9 +957,22 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(
+          LogicalKeyboardKey.keyN,
+          control: true,
+        ): () => unawaited(_newProject()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyO,
+          control: true,
+        ): () => unawaited(_openProject()),
+        const SingleActivator(
           LogicalKeyboardKey.keyS,
           control: true,
-        ): () => unawaited(_controller.saveDocument(force: true)),
+          shift: true,
+        ): () => unawaited(_saveProjectAs()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyS,
+          control: true,
+        ): () => unawaited(_saveProject()),
         const SingleActivator(
           LogicalKeyboardKey.keyZ,
           control: true,
@@ -719,9 +993,16 @@ class _EditorMainScreenState extends State<EditorMainScreen>
             body: Column(
               children: [
                 EditorToolbar(
-                  onSave: () => unawaited(
-                    _controller.saveDocument(force: true),
-                  ),
+                  projectName: _controller.projectName,
+                  isDirty: _controller.isDirty,
+                  recentProjects: _recentProjects,
+                  onNewProject: () => unawaited(_newProject()),
+                  onOpenProject: () => unawaited(_openProject()),
+                  onOpenRecentProject: (projectPath) {
+                    unawaited(_openRecentProject(projectPath));
+                  },
+                  onSave: () => unawaited(_saveProject()),
+                  onSaveAs: () => unawaited(_saveProjectAs()),
                   onUndo: _undo,
                   onRedo: _redo,
                   isSaving: _controller.isSaving,
@@ -806,7 +1087,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                         message: _controller.storagePath ??
                             'Путь будет определён после запуска',
                         child: Text(
-                          '${_saveStatusText()}  •  Ctrl+S  •  Ctrl+Z / Ctrl+Y',
+                          '${_saveStatusText()}  •  Ctrl+S  •  Ctrl+N / Ctrl+O  •  Ctrl+Z / Ctrl+Y',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -880,6 +1161,8 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     super.dispose();
   }
 }
+
+enum _UnsavedChangesChoice { save, discard, cancel }
 
 extension _FirstOrNullExtension<T> on List<T> {
   T? get firstOrNull => isEmpty ? null : first;

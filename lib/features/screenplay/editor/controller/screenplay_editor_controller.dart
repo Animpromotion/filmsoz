@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
+import 'package:path/path.dart' as path;
 
 class ScreenplayEditorController extends ChangeNotifier {
   ScreenplayEditorController({LocalStorageService? storageService})
@@ -27,6 +29,7 @@ class ScreenplayEditorController extends ChangeNotifier {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isDirty = false;
+  bool _hasPendingAutosave = false;
   bool _saveRequestedWhileSaving = false;
   bool _isDisposed = false;
 
@@ -35,8 +38,11 @@ class ScreenplayEditorController extends ChangeNotifier {
   String? _typingBlockId;
 
   DateTime? _lastSavedAt;
+  DateTime? _lastProjectSavedAt;
   String? _lastError;
   String? _storagePath;
+  String? _projectPath;
+  String _projectName = 'Без названия';
 
   FilmDocument get document => _document;
   bool get isInitialized => _isInitialized;
@@ -45,9 +51,13 @@ class ScreenplayEditorController extends ChangeNotifier {
   bool get isDirty => _isDirty;
   bool get canUndo => _undoStack.isNotEmpty;
   bool get canRedo => _redoStack.isNotEmpty;
+  bool get hasProjectPath => _projectPath != null;
   DateTime? get lastSavedAt => _lastSavedAt;
+  DateTime? get lastProjectSavedAt => _lastProjectSavedAt;
   String? get lastError => _lastError;
   String? get storagePath => _storagePath;
+  String? get projectPath => _projectPath;
+  String get projectName => _projectName;
 
   Future<void> initialize() async {
     if (_isInitialized) {
@@ -59,20 +69,36 @@ class ScreenplayEditorController extends ChangeNotifier {
     _notifySafely();
 
     try {
-      final loadedDocument = await _storageService.loadFromLocal();
+      final storedState = await _storageService.loadAutosaveState();
 
-      if (loadedDocument != null) {
-        _document = loadedDocument;
+      if (storedState != null) {
+        _document = storedState.document;
+        _isDirty = storedState.isDirty;
+
+        final restoredPath = storedState.projectPath;
+
+        if (restoredPath != null && await File(restoredPath).exists()) {
+          _projectPath = restoredPath;
+          _projectName = storedState.projectName?.trim().isNotEmpty == true
+              ? storedState.projectName!.trim()
+              : path.basenameWithoutExtension(restoredPath);
+          _storagePath = restoredPath;
+        } else {
+          _projectPath = null;
+          _projectName = storedState.projectName?.trim().isNotEmpty == true
+              ? storedState.projectName!.trim()
+              : 'Восстановленный сценарий';
+        }
       }
 
-      _storagePath = await _storageService.autosavePath;
+      _storagePath ??= await _storageService.autosavePath;
     } catch (error) {
       _lastError = 'Не удалось загрузить автосохранение: $error';
     } finally {
       _clearHistory();
       _isInitialized = true;
       _isLoading = false;
-      _isDirty = false;
+      _hasPendingAutosave = false;
       _startPeriodicSave();
       _notifySafely();
     }
@@ -176,6 +202,138 @@ class ScreenplayEditorController extends ChangeNotifier {
     return true;
   }
 
+  void createNewProject() {
+    _finishTypingGroup();
+    _document = FilmDocument.empty();
+    _projectPath = null;
+    _projectName = 'Без названия';
+    _storagePath = null;
+    _lastProjectSavedAt = null;
+    _lastError = null;
+    _isDirty = false;
+    _hasPendingAutosave = true;
+    _revision++;
+    _clearHistory();
+    _notifySafely();
+    _scheduleDebouncedSave(delay: const Duration(milliseconds: 100));
+  }
+
+  Future<bool> openProjectFromPath(String filePath) async {
+    await _waitForActiveSave();
+
+    if (_isDisposed) {
+      return false;
+    }
+
+    _isLoading = true;
+    _lastError = null;
+    _notifySafely();
+
+    try {
+      final normalizedPath = _storageService.normalizeProjectPath(filePath);
+      final loadedDocument = await _storageService.loadProjectFromPath(
+        normalizedPath,
+      );
+
+      _document = loadedDocument;
+      _projectPath = normalizedPath;
+      _projectName = path.basenameWithoutExtension(normalizedPath);
+      _storagePath = normalizedPath;
+      _lastProjectSavedAt = DateTime.now();
+      _isDirty = false;
+      _hasPendingAutosave = true;
+      _revision++;
+      _clearHistory();
+
+      await _storageService.saveToLocal(
+        _cloneDocument(_document),
+        projectPath: _projectPath,
+        projectName: _projectName,
+        isDirty: false,
+      );
+
+      _lastSavedAt = DateTime.now();
+      _hasPendingAutosave = false;
+      return true;
+    } catch (error) {
+      _lastError = 'Не удалось открыть проект: $error';
+      return false;
+    } finally {
+      _isLoading = false;
+      _notifySafely();
+    }
+  }
+
+  Future<bool> saveProjectToPath(String filePath) async {
+    await _waitForActiveSave();
+
+    if (_isDisposed) {
+      return false;
+    }
+
+    _debouncedSaveTimer?.cancel();
+    _isSaving = true;
+    _lastError = null;
+
+    final savedRevision = _revision;
+    final documentSnapshot = _cloneDocument(_document);
+    _notifySafely();
+
+    try {
+      final normalizedPath = await _storageService.saveProjectToPath(
+        documentSnapshot,
+        filePath,
+      );
+
+      _projectPath = normalizedPath;
+      _projectName = path.basenameWithoutExtension(normalizedPath);
+      _storagePath = normalizedPath;
+      _lastProjectSavedAt = DateTime.now();
+
+      if (_revision == savedRevision) {
+        _isDirty = false;
+      }
+
+      final autosaveRevision = _revision;
+      final autosaveSnapshot = _cloneDocument(_document);
+
+      await _storageService.saveToLocal(
+        autosaveSnapshot,
+        projectPath: _projectPath,
+        projectName: _projectName,
+        isDirty: _isDirty,
+      );
+
+      _lastSavedAt = DateTime.now();
+      _hasPendingAutosave = _revision != autosaveRevision;
+      return true;
+    } catch (error) {
+      _lastError = 'Ошибка сохранения проекта: $error';
+      _isDirty = true;
+      _hasPendingAutosave = true;
+      return false;
+    } finally {
+      _isSaving = false;
+      _notifySafely();
+
+      if (_revision != savedRevision && !_isDisposed) {
+        _scheduleDebouncedSave(
+          delay: const Duration(milliseconds: 350),
+        );
+      }
+    }
+  }
+
+  Future<bool> saveCurrentProject() async {
+    final currentPath = _projectPath;
+
+    if (currentPath == null) {
+      return false;
+    }
+
+    return saveProjectToPath(currentPath);
+  }
+
   Future<void> saveDocument({bool force = false}) async {
     if (_isDisposed || !_isInitialized) {
       return;
@@ -186,7 +344,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       return;
     }
 
-    if (!force && !_isDirty) {
+    if (!force && !_hasPendingAutosave) {
       return;
     }
 
@@ -195,19 +353,26 @@ class ScreenplayEditorController extends ChangeNotifier {
     _lastError = null;
 
     final savedRevision = _revision;
+    final documentSnapshot = _cloneDocument(_document);
     _notifySafely();
 
     try {
-      await _storageService.saveToLocal(_document);
-      _storagePath ??= await _storageService.autosavePath;
+      await _storageService.saveToLocal(
+        documentSnapshot,
+        projectPath: _projectPath,
+        projectName: _projectName,
+        isDirty: _isDirty,
+      );
+
+      _storagePath ??= _projectPath ?? await _storageService.autosavePath;
       _lastSavedAt = DateTime.now();
 
       if (_revision == savedRevision) {
-        _isDirty = false;
+        _hasPendingAutosave = false;
       }
     } catch (error) {
-      _lastError = 'Ошибка сохранения: $error';
-      _isDirty = true;
+      _lastError = 'Ошибка автосохранения: $error';
+      _hasPendingAutosave = true;
     } finally {
       _isSaving = false;
 
@@ -279,6 +444,7 @@ class ScreenplayEditorController extends ChangeNotifier {
   void _markDocumentChanged() {
     _revision++;
     _isDirty = true;
+    _hasPendingAutosave = true;
     _lastError = null;
     _scheduleDebouncedSave();
     _notifySafely();
@@ -300,6 +466,12 @@ class ScreenplayEditorController extends ChangeNotifier {
       const Duration(seconds: 30),
       (_) => unawaited(saveDocument()),
     );
+  }
+
+  Future<void> _waitForActiveSave() async {
+    while (_isSaving && !_isDisposed) {
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+    }
   }
 
   String _generateBlockId() {
