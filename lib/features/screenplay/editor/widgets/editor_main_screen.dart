@@ -12,6 +12,7 @@ import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sh
 import 'package:filmsoz_studio/features/screenplay/formatting/screenplay_editing_flow_service.dart';
 import 'package:filmsoz_studio/features/screenplay/formatting/smart_formatting_service.dart';
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
+import 'package:filmsoz_studio/features/screenplay/pdf/screenplay_pdf_export_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_service.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_toolbar.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service.dart';
@@ -2287,6 +2288,19 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     }
   }
 
+  Future<void> _showPdfExportDialog() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return ScreenplayPdfExportDialog(
+          document: _controller.document,
+          projectName: _controller.projectName,
+        );
+      },
+    );
+  }
+
   Future<bool> _confirmDiscardChanges({
     required String actionName,
   }) async {
@@ -3027,6 +3041,10 @@ class _EditorMainScreenState extends State<EditorMainScreen>
         const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
+        ): () => unawaited(_showPdfExportDialog()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyP,
+          control: true,
           alt: true,
         ): () => unawaited(_showCharacterStatistics()),
         const SingleActivator(
@@ -3099,6 +3117,7 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   onSaveAs: () => unawaited(_saveProjectAs()),
                   onImportFountain: () => unawaited(_importFountain()),
                   onExportFountain: () => unawaited(_exportFountain()),
+                  onExportPdf: () => unawaited(_showPdfExportDialog()),
                   onUndo: _undo,
                   onRedo: _redo,
                   isSaving: _controller.isSaving,

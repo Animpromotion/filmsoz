@@ -14,6 +14,7 @@ class EditorToolbar extends StatelessWidget {
     required this.onSaveAs,
     required this.onImportFountain,
     required this.onExportFountain,
+    required this.onExportPdf,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -32,6 +33,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onSaveAs;
   final VoidCallback onImportFountain;
   final VoidCallback onExportFountain;
+  final VoidCallback onExportPdf;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -318,6 +320,9 @@ class EditorToolbar extends StatelessWidget {
       color: const Color(0xFF303033),
       onSelected: (action) {
         switch (action) {
+          case _ExportMenuAction.pdf:
+            onExportPdf();
+            break;
           case _ExportMenuAction.fountain:
             onExportFountain();
             break;
@@ -325,6 +330,15 @@ class EditorToolbar extends StatelessWidget {
       },
       itemBuilder: (context) {
         return const <PopupMenuEntry<_ExportMenuAction>>[
+          PopupMenuItem<_ExportMenuAction>(
+            value: _ExportMenuAction.pdf,
+            child: _MenuRow(
+              icon: Icons.picture_as_pdf_outlined,
+              label: 'PDF и печать...',
+              shortcut: 'Ctrl+P',
+            ),
+          ),
+          PopupMenuDivider(),
           PopupMenuItem<_ExportMenuAction>(
             value: _ExportMenuAction.fountain,
             child: _MenuRow(
@@ -405,7 +419,7 @@ enum _FileMenuAction {
   openRecentProject,
 }
 
-enum _ExportMenuAction { fountain }
+enum _ExportMenuAction { pdf, fountain }
 
 class _FileMenuSelection {
   const _FileMenuSelection(this.action) : recentPath = null;
