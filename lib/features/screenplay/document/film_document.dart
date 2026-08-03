@@ -1,3 +1,4 @@
+import 'package:filmsoz_studio/features/screenplay/development/scene_development.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
@@ -6,11 +7,19 @@ class FilmDocument {
   FilmDocument({
     required this.blocks,
     Map<String, String>? sceneNotes,
-  }) : sceneNotes =
-            Map<String, String>.of(sceneNotes ?? const <String, String>{});
+    Map<String, SceneDevelopmentData>? sceneDevelopment,
+    ScreenplayGoals? goals,
+  })  : sceneNotes =
+            Map<String, String>.of(sceneNotes ?? const <String, String>{}),
+        sceneDevelopment = Map<String, SceneDevelopmentData>.of(
+          sceneDevelopment ?? const <String, SceneDevelopmentData>{},
+        ),
+        goals = goals ?? const ScreenplayGoals();
 
   final List<FilmBlock> blocks;
   final Map<String, String> sceneNotes;
+  final Map<String, SceneDevelopmentData> sceneDevelopment;
+  ScreenplayGoals goals;
 
   factory FilmDocument.empty() {
     return FilmDocument(
@@ -75,10 +84,18 @@ class FilmDocument {
 
   String sceneNote(String sceneId) => sceneNotes[sceneId] ?? '';
 
+  SceneDevelopmentData sceneDevelopmentFor(String sceneId) {
+    return sceneDevelopment[sceneId] ?? const SceneDevelopmentData();
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'blocks': blocks.map((block) => block.toJson()).toList(growable: false),
       'sceneNotes': Map<String, String>.of(sceneNotes),
+      'sceneDevelopment': sceneDevelopment.map(
+        (sceneId, data) => MapEntry(sceneId, data.toJson()),
+      ),
+      'goals': goals.toJson(),
     };
   }
 
@@ -123,15 +140,55 @@ class FilmDocument {
       }
     }
 
+    final development = <String, SceneDevelopmentData>{};
+    final rawDevelopment = json['sceneDevelopment'];
+
+    if (rawDevelopment is Map) {
+      for (final entry in rawDevelopment.entries) {
+        final sceneId = entry.key.toString();
+        final rawData = entry.value;
+
+        if (sceneId.isEmpty || rawData is! Map) {
+          continue;
+        }
+
+        final data = SceneDevelopmentData.fromJson(
+          rawData.map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+        );
+
+        if (!data.isDefault) {
+          development[sceneId] = data;
+        }
+      }
+    }
+
+    ScreenplayGoals goals = const ScreenplayGoals();
+    final rawGoals = json['goals'];
+
+    if (rawGoals is Map) {
+      goals = ScreenplayGoals.fromJson(
+        rawGoals.map(
+          (key, value) => MapEntry(key.toString(), value),
+        ),
+      );
+    }
+
     final validSceneIds = blocks
         .where((block) => block.type == BlockType.sceneHeading)
         .map((block) => block.id)
         .toSet();
     notes.removeWhere((sceneId, _) => !validSceneIds.contains(sceneId));
+    development.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
 
     return FilmDocument(
       blocks: blocks,
       sceneNotes: notes,
+      sceneDevelopment: development,
+      goals: goals,
     );
   }
 }

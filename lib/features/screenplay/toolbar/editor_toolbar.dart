@@ -15,6 +15,8 @@ class EditorToolbar extends StatelessWidget {
     required this.onImportFountain,
     required this.onExportFountain,
     required this.onExportPdf,
+    required this.onExportProductionReport,
+    required this.onOpenSceneBoard,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -34,6 +36,8 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onImportFountain;
   final VoidCallback onExportFountain;
   final VoidCallback onExportPdf;
+  final VoidCallback onExportProductionReport;
+  final VoidCallback onOpenSceneBoard;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -51,7 +55,11 @@ class EditorToolbar extends StatelessWidget {
         children: [
           _buildFileMenu(context),
           _buildMenuButton('Правка'),
-          _buildMenuButton('Вид'),
+          _buildMenuButton(
+            'Структура',
+            onPressed: onOpenSceneBoard,
+            tooltip: 'Структура фильма (Ctrl+Shift+B)',
+          ),
           _buildMenuButton('Формат'),
           _buildMenuButton('AI'),
           _buildExportMenu(),
@@ -323,6 +331,9 @@ class EditorToolbar extends StatelessWidget {
           case _ExportMenuAction.pdf:
             onExportPdf();
             break;
+          case _ExportMenuAction.productionReport:
+            onExportProductionReport();
+            break;
           case _ExportMenuAction.fountain:
             onExportFountain();
             break;
@@ -336,6 +347,15 @@ class EditorToolbar extends StatelessWidget {
               icon: Icons.picture_as_pdf_outlined,
               label: 'PDF и печать...',
               shortcut: 'Ctrl+P',
+            ),
+          ),
+          PopupMenuDivider(),
+          PopupMenuItem<_ExportMenuAction>(
+            value: _ExportMenuAction.productionReport,
+            child: _MenuRow(
+              icon: Icons.table_view_outlined,
+              label: 'Производственный отчёт...',
+              shortcut: 'Ctrl+Alt+R',
             ),
           ),
           PopupMenuDivider(),
@@ -388,8 +408,12 @@ class EditorToolbar extends StatelessWidget {
     );
   }
 
-  Widget _buildMenuButton(String label) {
-    return TextButton(
+  Widget _buildMenuButton(
+    String label, {
+    VoidCallback? onPressed,
+    String? tooltip,
+  }) {
+    final button = TextButton(
       style: TextButton.styleFrom(
         padding: const EdgeInsets.symmetric(
           horizontal: 12,
@@ -398,7 +422,7 @@ class EditorToolbar extends StatelessWidget {
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-      onPressed: () {},
+      onPressed: onPressed ?? () {},
       child: Text(
         label,
         style: const TextStyle(
@@ -407,6 +431,12 @@ class EditorToolbar extends StatelessWidget {
         ),
       ),
     );
+
+    if (tooltip == null) {
+      return button;
+    }
+
+    return Tooltip(message: tooltip, child: button);
   }
 }
 
@@ -419,7 +449,7 @@ enum _FileMenuAction {
   openRecentProject,
 }
 
-enum _ExportMenuAction { pdf, fountain }
+enum _ExportMenuAction { pdf, productionReport, fountain }
 
 class _FileMenuSelection {
   const _FileMenuSelection(this.action) : recentPath = null;

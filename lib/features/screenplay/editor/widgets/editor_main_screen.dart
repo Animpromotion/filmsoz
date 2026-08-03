@@ -3,6 +3,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:filmsoz_studio/features/screenplay/development/production_report_file_service.dart';
+import 'package:filmsoz_studio/features/screenplay/development/scene_board_dialog.dart';
+import 'package:filmsoz_studio/features/screenplay/development/screenplay_development_service.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
@@ -37,6 +40,10 @@ class _EditorMainScreenState extends State<EditorMainScreen>
       const ScreenplayEditingFlowService();
   final ScreenplayProductivityService _productivityService =
       const ScreenplayProductivityService();
+  final ScreenplayDevelopmentService _developmentService =
+      const ScreenplayDevelopmentService();
+  final ProductionReportFileService _productionReportFileService =
+      const ProductionReportFileService();
 
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _scrollAreaKey = GlobalKey();
@@ -335,6 +342,14 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     if (isControlPressed &&
         !isAltPressed &&
         isShiftPressed &&
+        key == LogicalKeyboardKey.keyB) {
+      unawaited(_showSceneBoard());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        isShiftPressed &&
         key == LogicalKeyboardKey.keyM) {
       unawaited(_editSceneNote());
       return KeyEventResult.handled;
@@ -412,6 +427,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
         (key == LogicalKeyboardKey.delete ||
             key == LogicalKeyboardKey.backspace)) {
       _deleteSelectedBlocks();
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed && isAltPressed && key == LogicalKeyboardKey.keyR) {
+      unawaited(_exportProductionReport());
       return KeyEventResult.handled;
     }
 
@@ -1842,6 +1862,48 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     _showOperationMessage('Заменено совпадений: $replaced');
   }
 
+  Future<void> _exportProductionReport() async {
+    try {
+      final filePath = await _productionReportFileService.chooseSavePath(
+        suggestedName: _controller.projectName,
+      );
+
+      if (filePath == null) {
+        return;
+      }
+
+      final csv = _developmentService.buildProductionReportCsv(
+        _controller.document,
+        projectName: _controller.projectName,
+      );
+      final savedPath = await _productionReportFileService.writeReport(
+        filePath,
+        csv,
+      );
+
+      _showOperationMessage('Производственный отчёт сохранён: $savedPath');
+    } catch (error) {
+      await _showOperationError(
+        title: 'Ошибка экспорта отчёта',
+        message: '$error',
+      );
+    }
+  }
+
+  Future<void> _showSceneBoard() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return SceneBoardDialog(
+          controller: _controller,
+          projectName: _controller.projectName,
+          onSceneSelected: _selectScene,
+        );
+      },
+    );
+  }
+
   Future<void> _showCharacterStatistics() async {
     final statistics = _productivityService.characterStatistics(
       _controller.document,
@@ -3039,6 +3101,16 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           shift: true,
         ): () => unawaited(_editSceneNote()),
         const SingleActivator(
+          LogicalKeyboardKey.keyB,
+          control: true,
+          shift: true,
+        ): () => unawaited(_showSceneBoard()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyR,
+          control: true,
+          alt: true,
+        ): () => unawaited(_exportProductionReport()),
+        const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
         ): () => unawaited(_showPdfExportDialog()),
@@ -3118,6 +3190,10 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   onImportFountain: () => unawaited(_importFountain()),
                   onExportFountain: () => unawaited(_exportFountain()),
                   onExportPdf: () => unawaited(_showPdfExportDialog()),
+                  onExportProductionReport: () {
+                    unawaited(_exportProductionReport());
+                  },
+                  onOpenSceneBoard: () => unawaited(_showSceneBoard()),
                   onUndo: _undo,
                   onRedo: _redo,
                   isSaving: _controller.isSaving,

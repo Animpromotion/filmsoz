@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:filmsoz_studio/features/screenplay/development/scene_development.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
@@ -576,6 +577,12 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.sceneNotes[duplicatedBlocks.first.id] = sourceNote;
     }
 
+    final sourceDevelopment = _document.sceneDevelopment[sceneId];
+
+    if (sourceDevelopment != null) {
+      _document.sceneDevelopment[duplicatedBlocks.first.id] = sourceDevelopment;
+    }
+
     _markDocumentChanged();
 
     final duplicatedScene = _document.sceneById(duplicatedBlocks.first.id);
@@ -605,6 +612,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       scene.endIndexExclusive,
     );
     _document.sceneNotes.remove(sceneId);
+    _document.sceneDevelopment.remove(sceneId);
 
     if (_document.sceneSections.isEmpty) {
       _document.blocks.add(
@@ -652,6 +660,63 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.sceneNotes[sceneId] = normalizedNote;
     }
 
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool setSceneDevelopment(
+    String sceneId, {
+    required String summary,
+    required SceneWorkStatus status,
+    required SceneColorTag colorTag,
+  }) {
+    if (_document.sceneById(sceneId) == null) {
+      return false;
+    }
+
+    final nextData = SceneDevelopmentData(
+      summary: summary.trim(),
+      status: status,
+      colorTag: colorTag,
+    );
+    final currentData = _document.sceneDevelopmentFor(sceneId);
+
+    if (currentData.summary == nextData.summary &&
+        currentData.status == nextData.status &&
+        currentData.colorTag == nextData.colorTag) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    if (nextData.isDefault) {
+      _document.sceneDevelopment.remove(sceneId);
+    } else {
+      _document.sceneDevelopment[sceneId] = nextData;
+    }
+
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool setScreenplayGoals(ScreenplayGoals goals) {
+    final normalized = ScreenplayGoals(
+      targetSceneCount: goals.targetSceneCount < 0 ? 0 : goals.targetSceneCount,
+      targetPageCount: goals.targetPageCount < 0 ? 0 : goals.targetPageCount,
+      targetMinutes: goals.targetMinutes < 0 ? 0 : goals.targetMinutes,
+    );
+    final current = _document.goals;
+
+    if (current.targetSceneCount == normalized.targetSceneCount &&
+        current.targetPageCount == normalized.targetPageCount &&
+        current.targetMinutes == normalized.targetMinutes) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.goals = normalized;
     _markDocumentChanged();
     return true;
   }
@@ -1133,6 +1198,8 @@ class ScreenplayEditorController extends ChangeNotifier {
           )
           .toList(growable: true),
       sceneNotes: source.sceneNotes,
+      sceneDevelopment: source.sceneDevelopment,
+      goals: source.goals,
     );
   }
 
@@ -1153,6 +1220,9 @@ class ScreenplayEditorController extends ChangeNotifier {
         .toSet();
 
     _document.sceneNotes.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
+    _document.sceneDevelopment.removeWhere(
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
   }
