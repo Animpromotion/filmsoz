@@ -18,6 +18,7 @@ import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dar
 import 'package:filmsoz_studio/features/screenplay/pdf/screenplay_pdf_export_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_service.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_toolbar.dart';
+import 'package:filmsoz_studio/features/screenplay/production/production_planning_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/project_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/toolbar/editor_toolbar.dart';
@@ -1904,6 +1905,20 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     );
   }
 
+  Future<void> _showProductionPlanning() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return ProductionPlanningDialog(
+          controller: _controller,
+          projectName: _controller.projectName,
+          onSceneSelected: _selectScene,
+        );
+      },
+    );
+  }
+
   Future<void> _showCharacterStatistics() async {
     final statistics = _productivityService.characterStatistics(
       _controller.document,
@@ -3117,6 +3132,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
         const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
+          shift: true,
+        ): () => unawaited(_showProductionPlanning()),
+        const SingleActivator(
+          LogicalKeyboardKey.keyP,
+          control: true,
           alt: true,
         ): () => unawaited(_showCharacterStatistics()),
         const SingleActivator(
@@ -3194,6 +3214,9 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                     unawaited(_exportProductionReport());
                   },
                   onOpenSceneBoard: () => unawaited(_showSceneBoard()),
+                  onOpenProductionPlanning: () {
+                    unawaited(_showProductionPlanning());
+                  },
                   onUndo: _undo,
                   onRedo: _redo,
                   isSaving: _controller.isSaving,

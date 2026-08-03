@@ -2,23 +2,34 @@ import 'package:filmsoz_studio/features/screenplay/development/scene_development
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
+import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
 
 class FilmDocument {
   FilmDocument({
     required this.blocks,
     Map<String, String>? sceneNotes,
     Map<String, SceneDevelopmentData>? sceneDevelopment,
+    Map<String, SceneProductionData>? sceneProduction,
+    List<ShootingDayPlan>? shootingDays,
     ScreenplayGoals? goals,
   })  : sceneNotes =
             Map<String, String>.of(sceneNotes ?? const <String, String>{}),
         sceneDevelopment = Map<String, SceneDevelopmentData>.of(
           sceneDevelopment ?? const <String, SceneDevelopmentData>{},
         ),
+        sceneProduction = Map<String, SceneProductionData>.of(
+          sceneProduction ?? const <String, SceneProductionData>{},
+        ),
+        shootingDays = List<ShootingDayPlan>.of(
+          shootingDays ?? const <ShootingDayPlan>[],
+        ),
         goals = goals ?? const ScreenplayGoals();
 
   final List<FilmBlock> blocks;
   final Map<String, String> sceneNotes;
   final Map<String, SceneDevelopmentData> sceneDevelopment;
+  final Map<String, SceneProductionData> sceneProduction;
+  final List<ShootingDayPlan> shootingDays;
   ScreenplayGoals goals;
 
   factory FilmDocument.empty() {
@@ -88,6 +99,20 @@ class FilmDocument {
     return sceneDevelopment[sceneId] ?? const SceneDevelopmentData();
   }
 
+  SceneProductionData sceneProductionFor(String sceneId) {
+    return sceneProduction[sceneId] ?? const SceneProductionData();
+  }
+
+  ShootingDayPlan? shootingDayById(String dayId) {
+    for (final day in shootingDays) {
+      if (day.id == dayId) {
+        return day;
+      }
+    }
+
+    return null;
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'blocks': blocks.map((block) => block.toJson()).toList(growable: false),
@@ -95,6 +120,11 @@ class FilmDocument {
       'sceneDevelopment': sceneDevelopment.map(
         (sceneId, data) => MapEntry(sceneId, data.toJson()),
       ),
+      'sceneProduction': sceneProduction.map(
+        (sceneId, data) => MapEntry(sceneId, data.toJson()),
+      ),
+      'shootingDays':
+          shootingDays.map((day) => day.toJson()).toList(growable: false),
       'goals': goals.toJson(),
     };
   }
@@ -164,6 +194,49 @@ class FilmDocument {
       }
     }
 
+    final production = <String, SceneProductionData>{};
+    final rawProduction = json['sceneProduction'];
+
+    if (rawProduction is Map) {
+      for (final entry in rawProduction.entries) {
+        final sceneId = entry.key.toString();
+        final rawData = entry.value;
+
+        if (sceneId.isEmpty || rawData is! Map) {
+          continue;
+        }
+
+        final data = SceneProductionData.fromJson(
+          rawData.map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+        );
+
+        if (!data.isDefault) {
+          production[sceneId] = data;
+        }
+      }
+    }
+
+    final shootingDays = <ShootingDayPlan>[];
+    final rawShootingDays = json['shootingDays'];
+
+    if (rawShootingDays is List) {
+      for (final rawDay in rawShootingDays) {
+        if (rawDay is! Map) {
+          continue;
+        }
+
+        shootingDays.add(
+          ShootingDayPlan.fromJson(
+            rawDay.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
     ScreenplayGoals goals = const ScreenplayGoals();
     final rawGoals = json['goals'];
 
@@ -183,11 +256,22 @@ class FilmDocument {
     development.removeWhere(
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
+    production.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
+
+    final normalizedDays = shootingDays.map((day) {
+      final sceneIds =
+          day.sceneIds.where(validSceneIds.contains).toList(growable: false);
+      return day.copyWith(sceneIds: sceneIds);
+    }).toList(growable: false);
 
     return FilmDocument(
       blocks: blocks,
       sceneNotes: notes,
       sceneDevelopment: development,
+      sceneProduction: production,
+      shootingDays: normalizedDays,
       goals: goals,
     );
   }

@@ -7,6 +7,7 @@ import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
+import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
 import 'package:path/path.dart' as path;
 
 class BlockMergeResult {
@@ -583,6 +584,12 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.sceneDevelopment[duplicatedBlocks.first.id] = sourceDevelopment;
     }
 
+    final sourceProduction = _document.sceneProduction[sceneId];
+
+    if (sourceProduction != null) {
+      _document.sceneProduction[duplicatedBlocks.first.id] = sourceProduction;
+    }
+
     _markDocumentChanged();
 
     final duplicatedScene = _document.sceneById(duplicatedBlocks.first.id);
@@ -613,6 +620,17 @@ class ScreenplayEditorController extends ChangeNotifier {
     );
     _document.sceneNotes.remove(sceneId);
     _document.sceneDevelopment.remove(sceneId);
+    _document.sceneProduction.remove(sceneId);
+    final normalizedShootingDays = _document.shootingDays.map((day) {
+      return day.copyWith(
+        sceneIds: day.sceneIds
+            .where((assignedSceneId) => assignedSceneId != sceneId)
+            .toList(growable: false),
+      );
+    }).toList(growable: false);
+    _document.shootingDays
+      ..clear()
+      ..addAll(normalizedShootingDays);
 
     if (_document.sceneSections.isEmpty) {
       _document.blocks.add(
@@ -697,6 +715,203 @@ class ScreenplayEditorController extends ChangeNotifier {
     }
 
     _markDocumentChanged();
+    return true;
+  }
+
+  bool setSceneProduction(
+    String sceneId,
+    SceneProductionData data,
+  ) {
+    if (_document.sceneById(sceneId) == null) {
+      return false;
+    }
+
+    final normalized = SceneProductionData(
+      cast: _normalizeProductionList(data.cast),
+      extras: data.extras < 0 ? 0 : data.extras,
+      locations: _normalizeProductionList(data.locations),
+      props: _normalizeProductionList(data.props),
+      costumes: _normalizeProductionList(data.costumes),
+      makeup: _normalizeProductionList(data.makeup),
+      vehicles: _normalizeProductionList(data.vehicles),
+      specialEquipment: _normalizeProductionList(data.specialEquipment),
+      notes: data.notes.trim(),
+      estimatedSetupMinutes:
+          data.estimatedSetupMinutes < 0 ? 0 : data.estimatedSetupMinutes,
+      estimatedShootMinutes:
+          data.estimatedShootMinutes < 0 ? 0 : data.estimatedShootMinutes,
+      priority: data.priority,
+    );
+    final current = _document.sceneProductionFor(sceneId);
+
+    if (_sameSceneProductionData(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    if (normalized.isDefault) {
+      _document.sceneProduction.remove(sceneId);
+    } else {
+      _document.sceneProduction[sceneId] = normalized;
+    }
+
+    _markDocumentChanged();
+    return true;
+  }
+
+  String createShootingDay({String? title}) {
+    final dayNumber = _document.shootingDays.length + 1;
+    final dayId = 'shooting_${_generateBlockId()}';
+    final normalizedTitle = title?.trim();
+    final day = ShootingDayPlan(
+      id: dayId,
+      title: normalizedTitle == null || normalizedTitle.isEmpty
+          ? 'Съёмочный день $dayNumber'
+          : normalizedTitle,
+    );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.shootingDays.add(day);
+    _markDocumentChanged();
+    return dayId;
+  }
+
+  bool updateShootingDay(ShootingDayPlan day) {
+    final index = _document.shootingDays.indexWhere(
+      (item) => item.id == day.id,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    final validSceneIds =
+        _document.sceneSections.map((scene) => scene.id).toSet();
+    final normalized = day.copyWith(
+      title: day.title.trim().isEmpty ? 'Съёмочный день' : day.title.trim(),
+      date: day.date.trim(),
+      location: day.location.trim(),
+      crewCall: day.crewCall.trim(),
+      firstShot: day.firstShot.trim(),
+      estimatedWrap: day.estimatedWrap.trim(),
+      sceneIds: day.sceneIds
+          .where(validSceneIds.contains)
+          .toSet()
+          .toList(growable: false),
+      notes: day.notes.trim(),
+    );
+    final current = _document.shootingDays[index];
+
+    if (_sameShootingDay(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.shootingDays[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deleteShootingDay(String dayId) {
+    final index = _document.shootingDays.indexWhere(
+      (day) => day.id == dayId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.shootingDays.removeAt(index);
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool moveShootingDay(String dayId, int offset) {
+    final index = _document.shootingDays.indexWhere(
+      (day) => day.id == dayId,
+    );
+    final targetIndex = index + (offset < 0 ? -1 : 1);
+
+    if (index == -1 ||
+        offset == 0 ||
+        targetIndex < 0 ||
+        targetIndex >= _document.shootingDays.length) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final day = _document.shootingDays.removeAt(index);
+    _document.shootingDays.insert(targetIndex, day);
+    _markDocumentChanged();
+    return true;
+  }
+
+  List<String> _normalizeProductionList(Iterable<String> values) {
+    final result = <String>[];
+    final seen = <String>{};
+
+    for (final value in values) {
+      final normalized = value.trim();
+
+      if (normalized.isEmpty || !seen.add(normalized.toUpperCase())) {
+        continue;
+      }
+
+      result.add(normalized);
+    }
+
+    return result;
+  }
+
+  bool _sameSceneProductionData(
+    SceneProductionData first,
+    SceneProductionData second,
+  ) {
+    return _sameStringLists(first.cast, second.cast) &&
+        first.extras == second.extras &&
+        _sameStringLists(first.locations, second.locations) &&
+        _sameStringLists(first.props, second.props) &&
+        _sameStringLists(first.costumes, second.costumes) &&
+        _sameStringLists(first.makeup, second.makeup) &&
+        _sameStringLists(first.vehicles, second.vehicles) &&
+        _sameStringLists(first.specialEquipment, second.specialEquipment) &&
+        first.notes == second.notes &&
+        first.estimatedSetupMinutes == second.estimatedSetupMinutes &&
+        first.estimatedShootMinutes == second.estimatedShootMinutes &&
+        first.priority == second.priority;
+  }
+
+  bool _sameShootingDay(ShootingDayPlan first, ShootingDayPlan second) {
+    return first.id == second.id &&
+        first.title == second.title &&
+        first.date == second.date &&
+        first.location == second.location &&
+        first.crewCall == second.crewCall &&
+        first.firstShot == second.firstShot &&
+        first.estimatedWrap == second.estimatedWrap &&
+        _sameStringLists(first.sceneIds, second.sceneIds) &&
+        first.notes == second.notes &&
+        first.status == second.status;
+  }
+
+  bool _sameStringLists(List<String> first, List<String> second) {
+    if (first.length != second.length) {
+      return false;
+    }
+
+    for (var index = 0; index < first.length; index++) {
+      if (first[index] != second[index]) {
+        return false;
+      }
+    }
+
     return true;
   }
 
@@ -1199,6 +1414,8 @@ class ScreenplayEditorController extends ChangeNotifier {
           .toList(growable: true),
       sceneNotes: source.sceneNotes,
       sceneDevelopment: source.sceneDevelopment,
+      sceneProduction: source.sceneProduction,
+      shootingDays: source.shootingDays,
       goals: source.goals,
     );
   }
@@ -1225,6 +1442,22 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.sceneDevelopment.removeWhere(
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
+    _document.sceneProduction.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
+
+    final normalizedDays = _document.shootingDays.map((day) {
+      return day.copyWith(
+        sceneIds: day.sceneIds
+            .where(validSceneIds.contains)
+            .toSet()
+            .toList(growable: false),
+      );
+    }).toList(growable: false);
+
+    _document.shootingDays
+      ..clear()
+      ..addAll(normalizedDays);
   }
 
   void _scheduleDebouncedSave({

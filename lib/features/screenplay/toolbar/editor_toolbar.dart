@@ -17,6 +17,7 @@ class EditorToolbar extends StatelessWidget {
     required this.onExportPdf,
     required this.onExportProductionReport,
     required this.onOpenSceneBoard,
+    required this.onOpenProductionPlanning,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -38,6 +39,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onExportPdf;
   final VoidCallback onExportProductionReport;
   final VoidCallback onOpenSceneBoard;
+  final VoidCallback onOpenProductionPlanning;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -59,6 +61,11 @@ class EditorToolbar extends StatelessWidget {
             'Структура',
             onPressed: onOpenSceneBoard,
             tooltip: 'Структура фильма (Ctrl+Shift+B)',
+          ),
+          _buildMenuButton(
+            'Съёмки',
+            onPressed: onOpenProductionPlanning,
+            tooltip: 'Производственное планирование (Ctrl+Shift+P)',
           ),
           _buildMenuButton('Формат'),
           _buildMenuButton('AI'),
