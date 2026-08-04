@@ -4,6 +4,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
+import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
 
 class FilmDocument {
   FilmDocument({
@@ -14,6 +15,7 @@ class FilmDocument {
     List<ShootingDayPlan>? shootingDays,
     List<ProductionPerson>? productionPeople,
     List<BudgetItem>? budgetItems,
+    Map<String, List<StoryboardShot>>? storyboardShots,
     String budgetCurrency = 'TJS',
     ScreenplayGoals? goals,
   })  : sceneNotes =
@@ -33,6 +35,12 @@ class FilmDocument {
         budgetItems = List<BudgetItem>.of(
           budgetItems ?? const <BudgetItem>[],
         ),
+        storyboardShots = <String, List<StoryboardShot>>{
+          for (final entry
+              in (storyboardShots ?? const <String, List<StoryboardShot>>{})
+                  .entries)
+            entry.key: List<StoryboardShot>.of(entry.value),
+        },
         budgetCurrency = budgetCurrency.trim().isEmpty
             ? 'TJS'
             : budgetCurrency.trim().toUpperCase(),
@@ -45,6 +53,7 @@ class FilmDocument {
   final List<ShootingDayPlan> shootingDays;
   final List<ProductionPerson> productionPeople;
   final List<BudgetItem> budgetItems;
+  final Map<String, List<StoryboardShot>> storyboardShots;
   String budgetCurrency;
   ScreenplayGoals goals;
 
@@ -139,6 +148,28 @@ class FilmDocument {
     return null;
   }
 
+  List<StoryboardShot> storyboardShotsFor(String sceneId) {
+    return List<StoryboardShot>.unmodifiable(
+      storyboardShots[sceneId] ?? const <StoryboardShot>[],
+    );
+  }
+
+  StoryboardShot? storyboardShotById(String sceneId, String shotId) {
+    final shots = storyboardShots[sceneId];
+
+    if (shots == null) {
+      return null;
+    }
+
+    for (final shot in shots) {
+      if (shot.id == shotId) {
+        return shot;
+      }
+    }
+
+    return null;
+  }
+
   ShootingDayPlan? shootingDayById(String dayId) {
     for (final day in shootingDays) {
       if (day.id == dayId) {
@@ -166,6 +197,12 @@ class FilmDocument {
           .toList(growable: false),
       'budgetItems':
           budgetItems.map((item) => item.toJson()).toList(growable: false),
+      'storyboardShots': storyboardShots.map(
+        (sceneId, shots) => MapEntry(
+          sceneId,
+          shots.map((shot) => shot.toJson()).toList(growable: false),
+        ),
+      ),
       'budgetCurrency': budgetCurrency,
       'goals': goals.toJson(),
     };
@@ -317,6 +354,40 @@ class FilmDocument {
       }
     }
 
+    final storyboardShots = <String, List<StoryboardShot>>{};
+    final rawStoryboardShots = json['storyboardShots'];
+
+    if (rawStoryboardShots is Map) {
+      for (final entry in rawStoryboardShots.entries) {
+        final sceneId = entry.key.toString();
+        final rawShots = entry.value;
+
+        if (sceneId.isEmpty || rawShots is! List) {
+          continue;
+        }
+
+        final shots = <StoryboardShot>[];
+
+        for (final rawShot in rawShots) {
+          if (rawShot is! Map) {
+            continue;
+          }
+
+          shots.add(
+            StoryboardShot.fromJson(
+              rawShot.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ),
+            ),
+          );
+        }
+
+        if (shots.isNotEmpty) {
+          storyboardShots[sceneId] = shots;
+        }
+      }
+    }
+
     final rawBudgetCurrency = json['budgetCurrency']?.toString().trim();
     final budgetCurrency =
         rawBudgetCurrency == null || rawBudgetCurrency.isEmpty
@@ -345,6 +416,9 @@ class FilmDocument {
     production.removeWhere(
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
+    storyboardShots.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
 
     final normalizedDays = shootingDays.map((day) {
       final sceneIds =
@@ -370,6 +444,7 @@ class FilmDocument {
       shootingDays: normalizedDays,
       productionPeople: productionPeople,
       budgetItems: normalizedBudgetItems,
+      storyboardShots: storyboardShots,
       budgetCurrency: budgetCurrency,
       goals: goals,
     );

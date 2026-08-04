@@ -19,6 +19,7 @@ class EditorToolbar extends StatelessWidget {
     required this.onOpenSceneBoard,
     required this.onOpenProductionPlanning,
     required this.onOpenProductionManagement,
+    required this.onOpenStoryboard,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -42,6 +43,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onOpenSceneBoard;
   final VoidCallback onOpenProductionPlanning;
   final VoidCallback onOpenProductionManagement;
+  final VoidCallback onOpenStoryboard;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -73,6 +75,11 @@ class EditorToolbar extends StatelessWidget {
             'Команда',
             onPressed: onOpenProductionManagement,
             tooltip: 'Команда, актёры и бюджет (Ctrl+Shift+T)',
+          ),
+          _buildMenuButton(
+            'Раскадровка',
+            onPressed: onOpenStoryboard,
+            tooltip: 'Монтажный сценарий и раскадровка (Ctrl+Shift+K)',
           ),
           _buildMenuButton('Формат'),
           _buildMenuButton('AI'),
@@ -348,6 +355,9 @@ class EditorToolbar extends StatelessWidget {
           case _ExportMenuAction.productionReport:
             onExportProductionReport();
             break;
+          case _ExportMenuAction.storyboard:
+            onOpenStoryboard();
+            break;
           case _ExportMenuAction.fountain:
             onExportFountain();
             break;
@@ -370,6 +380,15 @@ class EditorToolbar extends StatelessWidget {
               icon: Icons.table_view_outlined,
               label: 'Производственный отчёт...',
               shortcut: 'Ctrl+Alt+R',
+            ),
+          ),
+          PopupMenuDivider(),
+          PopupMenuItem<_ExportMenuAction>(
+            value: _ExportMenuAction.storyboard,
+            child: _MenuRow(
+              icon: Icons.movie_creation_outlined,
+              label: 'Монтажный сценарий и раскадровка...',
+              shortcut: 'Ctrl+Shift+K',
             ),
           ),
           PopupMenuDivider(),
@@ -463,7 +482,7 @@ enum _FileMenuAction {
   openRecentProject,
 }
 
-enum _ExportMenuAction { pdf, productionReport, fountain }
+enum _ExportMenuAction { pdf, productionReport, storyboard, fountain }
 
 class _FileMenuSelection {
   const _FileMenuSelection(this.action) : recentPath = null;

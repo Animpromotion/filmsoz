@@ -9,6 +9,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
+import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
 import 'package:path/path.dart' as path;
 
 class BlockMergeResult {
@@ -591,6 +592,18 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.sceneProduction[duplicatedBlocks.first.id] = sourceProduction;
     }
 
+    final sourceShots = _document.storyboardShots[sceneId];
+
+    if (sourceShots != null && sourceShots.isNotEmpty) {
+      _document.storyboardShots[duplicatedBlocks.first.id] = sourceShots
+          .map(
+            (shot) => shot.copyWith(
+              id: 'shot_${_generateBlockId()}',
+            ),
+          )
+          .toList(growable: true);
+    }
+
     _markDocumentChanged();
 
     final duplicatedScene = _document.sceneById(duplicatedBlocks.first.id);
@@ -622,6 +635,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.sceneNotes.remove(sceneId);
     _document.sceneDevelopment.remove(sceneId);
     _document.sceneProduction.remove(sceneId);
+    _document.storyboardShots.remove(sceneId);
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.sceneId == sceneId ? item.copyWith(clearSceneId: true) : item;
     }).toList(growable: false);
@@ -764,6 +778,123 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.sceneProduction[sceneId] = normalized;
     }
 
+    _markDocumentChanged();
+    return true;
+  }
+
+  String? createStoryboardShot(
+    String sceneId, {
+    StoryboardShot? template,
+  }) {
+    if (_document.sceneById(sceneId) == null) {
+      return null;
+    }
+
+    final id = 'shot_${_generateBlockId()}';
+    final source = template;
+    final shot =
+        source == null ? StoryboardShot(id: id) : source.copyWith(id: id);
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.storyboardShots
+        .putIfAbsent(sceneId, () => <StoryboardShot>[])
+        .add(_normalizeStoryboardShot(shot));
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updateStoryboardShot(String sceneId, StoryboardShot shot) {
+    final shots = _document.storyboardShots[sceneId];
+
+    if (shots == null) {
+      return false;
+    }
+
+    final index = shots.indexWhere((item) => item.id == shot.id);
+
+    if (index == -1) {
+      return false;
+    }
+
+    final normalized = _normalizeStoryboardShot(shot);
+    final current = shots[index];
+
+    if (_sameStoryboardShot(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    shots[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  String? duplicateStoryboardShot(String sceneId, String shotId) {
+    final source = _document.storyboardShotById(sceneId, shotId);
+
+    if (source == null) {
+      return null;
+    }
+
+    final shots = _document.storyboardShots[sceneId]!;
+    final sourceIndex = shots.indexWhere((shot) => shot.id == shotId);
+    final id = 'shot_${_generateBlockId()}';
+    final duplicate = source.copyWith(id: id);
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    shots.insert(sourceIndex + 1, duplicate);
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool deleteStoryboardShot(String sceneId, String shotId) {
+    final shots = _document.storyboardShots[sceneId];
+
+    if (shots == null) {
+      return false;
+    }
+
+    final index = shots.indexWhere((shot) => shot.id == shotId);
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    shots.removeAt(index);
+
+    if (shots.isEmpty) {
+      _document.storyboardShots.remove(sceneId);
+    }
+
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool moveStoryboardShot(
+    String sceneId, {
+    required int oldIndex,
+    required int newIndex,
+  }) {
+    final shots = _document.storyboardShots[sceneId];
+
+    if (shots == null ||
+        oldIndex < 0 ||
+        oldIndex >= shots.length ||
+        newIndex < 0 ||
+        newIndex >= shots.length ||
+        oldIndex == newIndex) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final shot = shots.removeAt(oldIndex);
+    shots.insert(newIndex, shot);
     _markDocumentChanged();
     return true;
   }
@@ -1035,6 +1166,48 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.budgetCurrency = normalized;
     _markDocumentChanged();
     return true;
+  }
+
+  StoryboardShot _normalizeStoryboardShot(StoryboardShot shot) {
+    return StoryboardShot(
+      id: shot.id,
+      title: shot.title.trim(),
+      shotSize: shot.shotSize,
+      cameraAngle: shot.cameraAngle,
+      cameraMovement: shot.cameraMovement,
+      lens: shot.lens.trim(),
+      fps: shot.fps <= 0 ? 24 : shot.fps,
+      durationSeconds: shot.durationSeconds < 0 ? 0 : shot.durationSeconds,
+      equipment: normalizeStoryboardStrings(shot.equipment),
+      visualDescription: shot.visualDescription.trim(),
+      actionDescription: shot.actionDescription.trim(),
+      dialogue: shot.dialogue.trim(),
+      sound: shot.sound.trim(),
+      notes: shot.notes.trim(),
+      imageFileName: shot.imageFileName?.trim(),
+      imageMimeType: shot.imageMimeType?.trim(),
+      imageBase64: shot.imageBase64?.trim(),
+    );
+  }
+
+  bool _sameStoryboardShot(StoryboardShot first, StoryboardShot second) {
+    return first.id == second.id &&
+        first.title == second.title &&
+        first.shotSize == second.shotSize &&
+        first.cameraAngle == second.cameraAngle &&
+        first.cameraMovement == second.cameraMovement &&
+        first.lens == second.lens &&
+        first.fps == second.fps &&
+        first.durationSeconds == second.durationSeconds &&
+        _sameStringLists(first.equipment, second.equipment) &&
+        first.visualDescription == second.visualDescription &&
+        first.actionDescription == second.actionDescription &&
+        first.dialogue == second.dialogue &&
+        first.sound == second.sound &&
+        first.notes == second.notes &&
+        first.imageFileName == second.imageFileName &&
+        first.imageMimeType == second.imageMimeType &&
+        first.imageBase64 == second.imageBase64;
   }
 
   bool _sameProductionPerson(
@@ -1630,6 +1803,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       shootingDays: source.shootingDays,
       productionPeople: source.productionPeople,
       budgetItems: source.budgetItems,
+      storyboardShots: source.storyboardShots,
       budgetCurrency: source.budgetCurrency,
       goals: source.goals,
     );
@@ -1658,6 +1832,9 @@ class ScreenplayEditorController extends ChangeNotifier {
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
     _document.sceneProduction.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
+    _document.storyboardShots.removeWhere(
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
 
