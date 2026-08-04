@@ -18,6 +18,7 @@ class EditorToolbar extends StatelessWidget {
     required this.onExportProductionReport,
     required this.onOpenSceneBoard,
     required this.onOpenProductionPlanning,
+    required this.onOpenProductionManagement,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -40,6 +41,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onExportProductionReport;
   final VoidCallback onOpenSceneBoard;
   final VoidCallback onOpenProductionPlanning;
+  final VoidCallback onOpenProductionManagement;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -66,6 +68,11 @@ class EditorToolbar extends StatelessWidget {
             'Съёмки',
             onPressed: onOpenProductionPlanning,
             tooltip: 'Производственное планирование (Ctrl+Shift+P)',
+          ),
+          _buildMenuButton(
+            'Команда',
+            onPressed: onOpenProductionManagement,
+            tooltip: 'Команда, актёры и бюджет (Ctrl+Shift+T)',
           ),
           _buildMenuButton('Формат'),
           _buildMenuButton('AI'),

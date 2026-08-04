@@ -8,6 +8,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
+import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
 import 'package:path/path.dart' as path;
 
 class BlockMergeResult {
@@ -621,6 +622,12 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.sceneNotes.remove(sceneId);
     _document.sceneDevelopment.remove(sceneId);
     _document.sceneProduction.remove(sceneId);
+    final normalizedBudgetItems = _document.budgetItems.map((item) {
+      return item.sceneId == sceneId ? item.copyWith(clearSceneId: true) : item;
+    }).toList(growable: false);
+    _document.budgetItems
+      ..clear()
+      ..addAll(normalizedBudgetItems);
     final normalizedShootingDays = _document.shootingDays.map((day) {
       return day.copyWith(
         sceneIds: day.sceneIds
@@ -828,6 +835,14 @@ class ScreenplayEditorController extends ChangeNotifier {
     _finishTypingGroup();
     _pushUndoSnapshot();
     _document.shootingDays.removeAt(index);
+    final normalizedBudgetItems = _document.budgetItems.map((item) {
+      return item.shootingDayId == dayId
+          ? item.copyWith(clearShootingDayId: true)
+          : item;
+    }).toList(growable: false);
+    _document.budgetItems
+      ..clear()
+      ..addAll(normalizedBudgetItems);
     _markDocumentChanged();
     return true;
   }
@@ -851,6 +866,203 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.shootingDays.insert(targetIndex, day);
     _markDocumentChanged();
     return true;
+  }
+
+  String createProductionPerson({
+    String name = 'Новый участник',
+    ProductionPersonType type = ProductionPersonType.crew,
+  }) {
+    final id = 'person_${_generateBlockId()}';
+    final person = ProductionPerson(
+      id: id,
+      name: name.trim().isEmpty ? 'Новый участник' : name.trim(),
+      type: type,
+      department: type == ProductionPersonType.cast
+          ? CrewDepartment.cast
+          : CrewDepartment.other,
+    );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.productionPeople.add(person);
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updateProductionPerson(ProductionPerson person) {
+    final index = _document.productionPeople.indexWhere(
+      (item) => item.id == person.id,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    final normalized = ProductionPerson(
+      id: person.id,
+      name: person.name.trim().isEmpty ? 'Без имени' : person.name.trim(),
+      type: person.type,
+      department: person.type == ProductionPersonType.cast
+          ? CrewDepartment.cast
+          : person.department,
+      jobTitle: person.jobTitle.trim(),
+      phone: person.phone.trim(),
+      email: person.email.trim(),
+      notes: person.notes.trim(),
+      linkedCharacters: _normalizeProductionList(person.linkedCharacters)
+          .map((value) => value.toUpperCase())
+          .toList(growable: false),
+      unavailableDates: _normalizeProductionList(person.unavailableDates),
+      dailyRate: person.dailyRate < 0 ? 0 : person.dailyRate,
+    );
+    final current = _document.productionPeople[index];
+
+    if (_sameProductionPerson(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.productionPeople[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deleteProductionPerson(String personId) {
+    final index = _document.productionPeople.indexWhere(
+      (person) => person.id == personId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.productionPeople.removeAt(index);
+    _markDocumentChanged();
+    return true;
+  }
+
+  String createBudgetItem({
+    String title = 'Новая статья',
+    BudgetCategory category = BudgetCategory.other,
+  }) {
+    final id = 'budget_${_generateBlockId()}';
+    final item = BudgetItem(
+      id: id,
+      title: title.trim().isEmpty ? 'Новая статья' : title.trim(),
+      category: category,
+    );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.budgetItems.add(item);
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updateBudgetItem(BudgetItem item) {
+    final index = _document.budgetItems.indexWhere(
+      (entry) => entry.id == item.id,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    final validSceneIds =
+        _document.sceneSections.map((scene) => scene.id).toSet();
+    final validDayIds = _document.shootingDays.map((day) => day.id).toSet();
+    final normalizedSceneId =
+        item.sceneId != null && validSceneIds.contains(item.sceneId)
+            ? item.sceneId
+            : null;
+    final normalizedDayId =
+        item.shootingDayId != null && validDayIds.contains(item.shootingDayId)
+            ? item.shootingDayId
+            : null;
+    final normalized = BudgetItem(
+      id: item.id,
+      title: item.title.trim().isEmpty ? 'Статья бюджета' : item.title.trim(),
+      category: item.category,
+      plannedAmount: item.plannedAmount < 0 ? 0 : item.plannedAmount,
+      actualAmount: item.actualAmount < 0 ? 0 : item.actualAmount,
+      paidAmount: item.paidAmount < 0 ? 0 : item.paidAmount,
+      payee: item.payee.trim(),
+      sceneId: normalizedSceneId,
+      shootingDayId: normalizedDayId,
+      notes: item.notes.trim(),
+    );
+    final current = _document.budgetItems[index];
+
+    if (_sameBudgetItem(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.budgetItems[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deleteBudgetItem(String itemId) {
+    final index = _document.budgetItems.indexWhere(
+      (item) => item.id == itemId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.budgetItems.removeAt(index);
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool setBudgetCurrency(String currency) {
+    final normalized = currency.trim().toUpperCase();
+
+    if (normalized.isEmpty || normalized == _document.budgetCurrency) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.budgetCurrency = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool _sameProductionPerson(
+    ProductionPerson first,
+    ProductionPerson second,
+  ) {
+    return first.name == second.name &&
+        first.type == second.type &&
+        first.department == second.department &&
+        first.jobTitle == second.jobTitle &&
+        first.phone == second.phone &&
+        first.email == second.email &&
+        first.notes == second.notes &&
+        _sameStringLists(first.linkedCharacters, second.linkedCharacters) &&
+        _sameStringLists(first.unavailableDates, second.unavailableDates) &&
+        first.dailyRate == second.dailyRate;
+  }
+
+  bool _sameBudgetItem(BudgetItem first, BudgetItem second) {
+    return first.title == second.title &&
+        first.category == second.category &&
+        first.plannedAmount == second.plannedAmount &&
+        first.actualAmount == second.actualAmount &&
+        first.paidAmount == second.paidAmount &&
+        first.payee == second.payee &&
+        first.sceneId == second.sceneId &&
+        first.shootingDayId == second.shootingDayId &&
+        first.notes == second.notes;
   }
 
   List<String> _normalizeProductionList(Iterable<String> values) {
@@ -1416,6 +1628,9 @@ class ScreenplayEditorController extends ChangeNotifier {
       sceneDevelopment: source.sceneDevelopment,
       sceneProduction: source.sceneProduction,
       shootingDays: source.shootingDays,
+      productionPeople: source.productionPeople,
+      budgetItems: source.budgetItems,
+      budgetCurrency: source.budgetCurrency,
       goals: source.goals,
     );
   }
@@ -1458,6 +1673,20 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.shootingDays
       ..clear()
       ..addAll(normalizedDays);
+
+    final validDayIds = normalizedDays.map((day) => day.id).toSet();
+    final normalizedBudgetItems = _document.budgetItems.map((item) {
+      return item.copyWith(
+        clearSceneId:
+            item.sceneId != null && !validSceneIds.contains(item.sceneId),
+        clearShootingDayId: item.shootingDayId != null &&
+            !validDayIds.contains(item.shootingDayId),
+      );
+    }).toList(growable: false);
+
+    _document.budgetItems
+      ..clear()
+      ..addAll(normalizedBudgetItems);
   }
 
   void _scheduleDebouncedSave({

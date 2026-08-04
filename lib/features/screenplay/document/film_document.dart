@@ -3,6 +3,7 @@ import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
+import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
 
 class FilmDocument {
   FilmDocument({
@@ -11,6 +12,9 @@ class FilmDocument {
     Map<String, SceneDevelopmentData>? sceneDevelopment,
     Map<String, SceneProductionData>? sceneProduction,
     List<ShootingDayPlan>? shootingDays,
+    List<ProductionPerson>? productionPeople,
+    List<BudgetItem>? budgetItems,
+    String budgetCurrency = 'TJS',
     ScreenplayGoals? goals,
   })  : sceneNotes =
             Map<String, String>.of(sceneNotes ?? const <String, String>{}),
@@ -23,6 +27,15 @@ class FilmDocument {
         shootingDays = List<ShootingDayPlan>.of(
           shootingDays ?? const <ShootingDayPlan>[],
         ),
+        productionPeople = List<ProductionPerson>.of(
+          productionPeople ?? const <ProductionPerson>[],
+        ),
+        budgetItems = List<BudgetItem>.of(
+          budgetItems ?? const <BudgetItem>[],
+        ),
+        budgetCurrency = budgetCurrency.trim().isEmpty
+            ? 'TJS'
+            : budgetCurrency.trim().toUpperCase(),
         goals = goals ?? const ScreenplayGoals();
 
   final List<FilmBlock> blocks;
@@ -30,6 +43,9 @@ class FilmDocument {
   final Map<String, SceneDevelopmentData> sceneDevelopment;
   final Map<String, SceneProductionData> sceneProduction;
   final List<ShootingDayPlan> shootingDays;
+  final List<ProductionPerson> productionPeople;
+  final List<BudgetItem> budgetItems;
+  String budgetCurrency;
   ScreenplayGoals goals;
 
   factory FilmDocument.empty() {
@@ -103,6 +119,26 @@ class FilmDocument {
     return sceneProduction[sceneId] ?? const SceneProductionData();
   }
 
+  ProductionPerson? productionPersonById(String personId) {
+    for (final person in productionPeople) {
+      if (person.id == personId) {
+        return person;
+      }
+    }
+
+    return null;
+  }
+
+  BudgetItem? budgetItemById(String itemId) {
+    for (final item in budgetItems) {
+      if (item.id == itemId) {
+        return item;
+      }
+    }
+
+    return null;
+  }
+
   ShootingDayPlan? shootingDayById(String dayId) {
     for (final day in shootingDays) {
       if (day.id == dayId) {
@@ -125,6 +161,12 @@ class FilmDocument {
       ),
       'shootingDays':
           shootingDays.map((day) => day.toJson()).toList(growable: false),
+      'productionPeople': productionPeople
+          .map((person) => person.toJson())
+          .toList(growable: false),
+      'budgetItems':
+          budgetItems.map((item) => item.toJson()).toList(growable: false),
+      'budgetCurrency': budgetCurrency,
       'goals': goals.toJson(),
     };
   }
@@ -237,6 +279,50 @@ class FilmDocument {
       }
     }
 
+    final productionPeople = <ProductionPerson>[];
+    final rawProductionPeople = json['productionPeople'];
+
+    if (rawProductionPeople is List) {
+      for (final rawPerson in rawProductionPeople) {
+        if (rawPerson is! Map) {
+          continue;
+        }
+
+        productionPeople.add(
+          ProductionPerson.fromJson(
+            rawPerson.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final budgetItems = <BudgetItem>[];
+    final rawBudgetItems = json['budgetItems'];
+
+    if (rawBudgetItems is List) {
+      for (final rawItem in rawBudgetItems) {
+        if (rawItem is! Map) {
+          continue;
+        }
+
+        budgetItems.add(
+          BudgetItem.fromJson(
+            rawItem.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final rawBudgetCurrency = json['budgetCurrency']?.toString().trim();
+    final budgetCurrency =
+        rawBudgetCurrency == null || rawBudgetCurrency.isEmpty
+            ? 'TJS'
+            : rawBudgetCurrency.toUpperCase();
+
     ScreenplayGoals goals = const ScreenplayGoals();
     final rawGoals = json['goals'];
 
@@ -266,12 +352,25 @@ class FilmDocument {
       return day.copyWith(sceneIds: sceneIds);
     }).toList(growable: false);
 
+    final validShootingDayIds = normalizedDays.map((day) => day.id).toSet();
+    final normalizedBudgetItems = budgetItems.map((item) {
+      return item.copyWith(
+        clearSceneId:
+            item.sceneId != null && !validSceneIds.contains(item.sceneId),
+        clearShootingDayId: item.shootingDayId != null &&
+            !validShootingDayIds.contains(item.shootingDayId),
+      );
+    }).toList(growable: false);
+
     return FilmDocument(
       blocks: blocks,
       sceneNotes: notes,
       sceneDevelopment: development,
       sceneProduction: production,
       shootingDays: normalizedDays,
+      productionPeople: productionPeople,
+      budgetItems: normalizedBudgetItems,
+      budgetCurrency: budgetCurrency,
       goals: goals,
     );
   }

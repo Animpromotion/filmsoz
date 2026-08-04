@@ -384,7 +384,7 @@ class ScreenplayDevelopmentService {
   String _csvRow(List<Object?> values) {
     return values.map((value) {
       final text = value?.toString() ?? '';
-      final escaped = text.replaceAll('\"', '\"\"');
+      final escaped = text.replaceAll('"', '""');
       return '"$escaped"';
     }).join(';');
   }

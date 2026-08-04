@@ -28,6 +28,7 @@ void main() {
         options: const ScreenplayPdfOptions(
           title: 'Filmsoz PDF test',
           author: 'Filmsoz',
+          includeTitlePage: false,
         ),
       );
 

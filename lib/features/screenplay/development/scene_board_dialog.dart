@@ -80,11 +80,7 @@ class _SceneBoardDialogState extends State<SceneBoardDialog> {
       return;
     }
 
-    var destinationIndex = newIndex;
-
-    if (destinationIndex > oldIndex) {
-      destinationIndex--;
-    }
+    final destinationIndex = newIndex;
 
     if (destinationIndex == oldIndex) {
       return;
@@ -545,7 +541,7 @@ class _SceneBoardDialogState extends State<SceneBoardDialog> {
       padding: const EdgeInsets.all(18),
       itemExtent: 304,
       itemCount: scenes.length,
-      onReorder: (oldIndex, newIndex) {
+      onReorderItem: (oldIndex, newIndex) {
         _reorderVisibleScenes(oldIndex, newIndex, scenes);
       },
       proxyDecorator: (child, index, animation) {
@@ -587,7 +583,7 @@ class _SceneBoardDialogState extends State<SceneBoardDialog> {
       buildDefaultDragHandles: false,
       padding: const EdgeInsets.all(16),
       itemCount: scenes.length,
-      onReorder: (oldIndex, newIndex) {
+      onReorderItem: (oldIndex, newIndex) {
         _reorderVisibleScenes(oldIndex, newIndex, scenes);
       },
       itemBuilder: (context, index) {

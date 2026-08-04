@@ -15,6 +15,7 @@ import 'package:filmsoz_studio/features/screenplay/editor/widgets/script_page_sh
 import 'package:filmsoz_studio/features/screenplay/formatting/screenplay_editing_flow_service.dart';
 import 'package:filmsoz_studio/features/screenplay/formatting/smart_formatting_service.dart';
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
+import 'package:filmsoz_studio/features/screenplay/management/production_management_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/pdf/screenplay_pdf_export_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_service.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_toolbar.dart';
@@ -1919,6 +1920,19 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     );
   }
 
+  Future<void> _showProductionManagement() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return ProductionManagementDialog(
+          controller: _controller,
+          projectName: _controller.projectName,
+        );
+      },
+    );
+  }
+
   Future<void> _showCharacterStatistics() async {
     final statistics = _productivityService.characterStatistics(
       _controller.document,
@@ -3135,6 +3149,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           shift: true,
         ): () => unawaited(_showProductionPlanning()),
         const SingleActivator(
+          LogicalKeyboardKey.keyT,
+          control: true,
+          shift: true,
+        ): () => unawaited(_showProductionManagement()),
+        const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
           alt: true,
@@ -3216,6 +3235,9 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   onOpenSceneBoard: () => unawaited(_showSceneBoard()),
                   onOpenProductionPlanning: () {
                     unawaited(_showProductionPlanning());
+                  },
+                  onOpenProductionManagement: () {
+                    unawaited(_showProductionManagement());
                   },
                   onUndo: _undo,
                   onRedo: _redo,

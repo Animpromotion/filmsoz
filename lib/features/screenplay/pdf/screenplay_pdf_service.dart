@@ -83,7 +83,7 @@ class ScreenplayPdfService {
       pdf.addPage(
         pw.Page(
           pageFormat: pageFormat,
-          margin: pw.EdgeInsets.fromLTRB(
+          margin: const pw.EdgeInsets.fromLTRB(
             28 * _millimeter,
             24 * _millimeter,
             22 * _millimeter,
@@ -98,7 +98,7 @@ class ScreenplayPdfService {
       pw.MultiPage(
         pageFormat: pageFormat,
         maxPages: 500,
-        margin: pw.EdgeInsets.fromLTRB(
+        margin: const pw.EdgeInsets.fromLTRB(
           25 * _millimeter,
           18 * _millimeter,
           20 * _millimeter,
@@ -132,7 +132,7 @@ class ScreenplayPdfService {
         pw.Text(
           title,
           textAlign: pw.TextAlign.center,
-          style: pw.TextStyle(
+          style: const pw.TextStyle(
             fontSize: 18,
             fontWeight: pw.FontWeight.bold,
             lineSpacing: 1,
@@ -173,20 +173,20 @@ class ScreenplayPdfService {
     final title = _documentTitle(options);
 
     return pw.Container(
-      padding: pw.EdgeInsets.only(top: 4 * _millimeter),
+      padding: const pw.EdgeInsets.only(top: 4 * _millimeter),
       child: pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: <pw.Widget>[
           pw.Text(
             title,
-            style: pw.TextStyle(
+            style: const pw.TextStyle(
               fontSize: 8,
               color: PdfColors.grey700,
             ),
           ),
           pw.Text(
             '${context.pageNumber}',
-            style: pw.TextStyle(
+            style: const pw.TextStyle(
               fontSize: 9,
               color: PdfColors.grey800,
             ),
@@ -246,13 +246,13 @@ class ScreenplayPdfService {
             text: text,
             textAlign: pw.TextAlign.left,
             style: baseStyle,
-            margin: pw.EdgeInsets.only(bottom: 3.5 * _millimeter),
+            margin: const pw.EdgeInsets.only(bottom: 3.5 * _millimeter),
           ),
         ];
       case BlockType.character:
         return <pw.Widget>[
           pw.Padding(
-            padding: pw.EdgeInsets.fromLTRB(
+            padding: const pw.EdgeInsets.fromLTRB(
               63 * _millimeter,
               2.5 * _millimeter,
               20 * _millimeter,
@@ -270,7 +270,7 @@ class ScreenplayPdfService {
             text: text,
             textAlign: pw.TextAlign.left,
             style: baseStyle,
-            margin: pw.EdgeInsets.fromLTRB(
+            margin: const pw.EdgeInsets.fromLTRB(
               34 * _millimeter,
               0,
               33 * _millimeter,
@@ -284,7 +284,7 @@ class ScreenplayPdfService {
             text: text,
             textAlign: pw.TextAlign.left,
             style: baseStyle.copyWith(fontStyle: pw.FontStyle.italic),
-            margin: pw.EdgeInsets.fromLTRB(
+            margin: const pw.EdgeInsets.fromLTRB(
               48 * _millimeter,
               0,
               42 * _millimeter,
@@ -295,7 +295,7 @@ class ScreenplayPdfService {
       case BlockType.transition:
         return <pw.Widget>[
           pw.Padding(
-            padding: pw.EdgeInsets.only(
+            padding: const pw.EdgeInsets.only(
               top: 2 * _millimeter,
               bottom: 4 * _millimeter,
             ),
@@ -321,7 +321,7 @@ class ScreenplayPdfService {
 
     if (!options.showSceneNumbers) {
       return pw.Padding(
-        padding: pw.EdgeInsets.only(
+        padding: const pw.EdgeInsets.only(
           top: 4 * _millimeter,
           bottom: 3.5 * _millimeter,
         ),
@@ -330,7 +330,7 @@ class ScreenplayPdfService {
     }
 
     return pw.Padding(
-      padding: pw.EdgeInsets.only(
+      padding: const pw.EdgeInsets.only(
         top: 4 * _millimeter,
         bottom: 3.5 * _millimeter,
       ),
