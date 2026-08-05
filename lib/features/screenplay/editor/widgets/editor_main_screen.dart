@@ -26,6 +26,7 @@ import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service
 import 'package:filmsoz_studio/features/screenplay/storage/project_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/toolbar/editor_toolbar.dart';
+import 'package:filmsoz_studio/features/screenplay/versioning/project_versioning_dialog.dart';
 
 class EditorMainScreen extends StatefulWidget {
   const EditorMainScreen({super.key});
@@ -349,6 +350,14 @@ class _EditorMainScreenState extends State<EditorMainScreen>
         isShiftPressed &&
         key == LogicalKeyboardKey.keyB) {
       unawaited(_showSceneBoard());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        isShiftPressed &&
+        key == LogicalKeyboardKey.keyH) {
+      unawaited(_showProjectVersioning());
       return KeyEventResult.handled;
     }
 
@@ -1978,6 +1987,13 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     );
   }
 
+  Future<void> _showProjectVersioning() async {
+    await showProjectVersioningDialog(
+      context: context,
+      controller: _controller,
+    );
+  }
+
   Future<void> _showCharacterStatistics() async {
     final statistics = _productivityService.characterStatistics(
       _controller.document,
@@ -3214,6 +3230,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           shift: true,
         ): () => unawaited(_showPostProduction()),
         const SingleActivator(
+          LogicalKeyboardKey.keyH,
+          control: true,
+          shift: true,
+        ): () => unawaited(_showProjectVersioning()),
+        const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
           alt: true,
@@ -3307,6 +3328,9 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   },
                   onOpenPostProduction: () {
                     unawaited(_showPostProduction());
+                  },
+                  onOpenVersioning: () {
+                    unawaited(_showProjectVersioning());
                   },
                   onUndo: _undo,
                   onRedo: _redo,

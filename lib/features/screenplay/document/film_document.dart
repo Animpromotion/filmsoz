@@ -7,6 +7,7 @@ import 'package:filmsoz_studio/features/screenplay/postproduction/postproduction
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
 import 'package:filmsoz_studio/features/screenplay/shooting_control/shooting_control.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
+import 'package:filmsoz_studio/features/screenplay/versioning/project_versioning.dart';
 
 class FilmDocument {
   FilmDocument({
@@ -25,6 +26,11 @@ class FilmDocument {
     List<EditVersion>? editVersions,
     List<PostProductionTask>? postProductionTasks,
     List<MissingMaterialItem>? missingMaterials,
+    List<ProjectMember>? projectMembers,
+    List<CollaborationComment>? collaborationComments,
+    List<ProjectChangeEntry>? projectChangeLog,
+    List<ProjectCheckpoint>? projectCheckpoints,
+    ProjectVersioningSettings? versioningSettings,
     String budgetCurrency = 'TJS',
     ScreenplayGoals? goals,
   })  : sceneNotes =
@@ -73,6 +79,20 @@ class FilmDocument {
         missingMaterials = List<MissingMaterialItem>.of(
           missingMaterials ?? const <MissingMaterialItem>[],
         ),
+        projectMembers = List<ProjectMember>.of(
+          projectMembers ?? const <ProjectMember>[],
+        ),
+        collaborationComments = List<CollaborationComment>.of(
+          collaborationComments ?? const <CollaborationComment>[],
+        ),
+        projectChangeLog = List<ProjectChangeEntry>.of(
+          projectChangeLog ?? const <ProjectChangeEntry>[],
+        ),
+        projectCheckpoints = List<ProjectCheckpoint>.of(
+          projectCheckpoints ?? const <ProjectCheckpoint>[],
+        ),
+        versioningSettings =
+            versioningSettings ?? const ProjectVersioningSettings(),
         budgetCurrency = budgetCurrency.trim().isEmpty
             ? 'TJS'
             : budgetCurrency.trim().toUpperCase(),
@@ -93,6 +113,11 @@ class FilmDocument {
   final List<EditVersion> editVersions;
   final List<PostProductionTask> postProductionTasks;
   final List<MissingMaterialItem> missingMaterials;
+  final List<ProjectMember> projectMembers;
+  final List<CollaborationComment> collaborationComments;
+  final List<ProjectChangeEntry> projectChangeLog;
+  final List<ProjectCheckpoint> projectCheckpoints;
+  ProjectVersioningSettings versioningSettings;
   String budgetCurrency;
   ScreenplayGoals goals;
 
@@ -279,6 +304,36 @@ class FilmDocument {
     return null;
   }
 
+  ProjectMember? projectMemberById(String memberId) {
+    for (final member in projectMembers) {
+      if (member.id == memberId) {
+        return member;
+      }
+    }
+
+    return null;
+  }
+
+  CollaborationComment? collaborationCommentById(String commentId) {
+    for (final comment in collaborationComments) {
+      if (comment.id == commentId) {
+        return comment;
+      }
+    }
+
+    return null;
+  }
+
+  ProjectCheckpoint? projectCheckpointById(String checkpointId) {
+    for (final checkpoint in projectCheckpoints) {
+      if (checkpoint.id == checkpointId) {
+        return checkpoint;
+      }
+    }
+
+    return null;
+  }
+
   ShootingDayPlan? shootingDayById(String dayId) {
     for (final day in shootingDays) {
       if (day.id == dayId) {
@@ -289,7 +344,7 @@ class FilmDocument {
     return null;
   }
 
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool includeCheckpoints = true}) {
     return <String, dynamic>{
       'blocks': blocks.map((block) => block.toJson()).toList(growable: false),
       'sceneNotes': Map<String, String>.of(sceneNotes),
@@ -335,6 +390,20 @@ class FilmDocument {
           .toList(growable: false),
       'missingMaterials':
           missingMaterials.map((item) => item.toJson()).toList(growable: false),
+      'projectMembers': projectMembers
+          .map((member) => member.toJson())
+          .toList(growable: false),
+      'collaborationComments': collaborationComments
+          .map((comment) => comment.toJson())
+          .toList(growable: false),
+      'projectChangeLog': projectChangeLog
+          .map((entry) => entry.toJson())
+          .toList(growable: false),
+      if (includeCheckpoints)
+        'projectCheckpoints': projectCheckpoints
+            .map((checkpoint) => checkpoint.toJson())
+            .toList(growable: false),
+      'versioningSettings': versioningSettings.toJson(),
       'budgetCurrency': budgetCurrency,
       'goals': goals.toJson(),
     };
@@ -678,6 +747,94 @@ class FilmDocument {
       }
     }
 
+    final projectMembers = <ProjectMember>[];
+    final rawProjectMembers = json['projectMembers'];
+
+    if (rawProjectMembers is List) {
+      for (final rawMember in rawProjectMembers) {
+        if (rawMember is! Map) {
+          continue;
+        }
+
+        projectMembers.add(
+          ProjectMember.fromJson(
+            rawMember.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final collaborationComments = <CollaborationComment>[];
+    final rawCollaborationComments = json['collaborationComments'];
+
+    if (rawCollaborationComments is List) {
+      for (final rawComment in rawCollaborationComments) {
+        if (rawComment is! Map) {
+          continue;
+        }
+
+        collaborationComments.add(
+          CollaborationComment.fromJson(
+            rawComment.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final projectChangeLog = <ProjectChangeEntry>[];
+    final rawProjectChangeLog = json['projectChangeLog'];
+
+    if (rawProjectChangeLog is List) {
+      for (final rawEntry in rawProjectChangeLog) {
+        if (rawEntry is! Map) {
+          continue;
+        }
+
+        projectChangeLog.add(
+          ProjectChangeEntry.fromJson(
+            rawEntry.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final projectCheckpoints = <ProjectCheckpoint>[];
+    final rawProjectCheckpoints = json['projectCheckpoints'];
+
+    if (rawProjectCheckpoints is List) {
+      for (final rawCheckpoint in rawProjectCheckpoints) {
+        if (rawCheckpoint is! Map) {
+          continue;
+        }
+
+        projectCheckpoints.add(
+          ProjectCheckpoint.fromJson(
+            rawCheckpoint.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    ProjectVersioningSettings versioningSettings =
+        const ProjectVersioningSettings();
+    final rawVersioningSettings = json['versioningSettings'];
+
+    if (rawVersioningSettings is Map) {
+      versioningSettings = ProjectVersioningSettings.fromJson(
+        rawVersioningSettings.map(
+          (key, value) => MapEntry(key.toString(), value),
+        ),
+      );
+    }
+
     final rawBudgetCurrency = json['budgetCurrency']?.toString().trim();
     final budgetCurrency =
         rawBudgetCurrency == null || rawBudgetCurrency.isEmpty
@@ -795,6 +952,38 @@ class FilmDocument {
       );
     }).toList(growable: false);
 
+    final validMemberIds = projectMembers.map((member) => member.id).toSet();
+    final validTakeIds = normalizedShotTakes.values
+        .expand((takes) => takes)
+        .map((take) => take.id)
+        .toSet();
+    final validTaskIds = normalizedPostTasks.map((task) => task.id).toSet();
+
+    final normalizedComments = collaborationComments.map((comment) {
+      final hasValidTarget = switch (comment.targetType) {
+        CollaborationTargetType.project => true,
+        CollaborationTargetType.scene =>
+          comment.targetId != null && validSceneIds.contains(comment.targetId),
+        CollaborationTargetType.shot =>
+          comment.targetId != null && validShotIds.contains(comment.targetId),
+        CollaborationTargetType.take =>
+          comment.targetId != null && validTakeIds.contains(comment.targetId),
+        CollaborationTargetType.task =>
+          comment.targetId != null && validTaskIds.contains(comment.targetId),
+      };
+
+      return comment.copyWith(
+        clearTargetId: !hasValidTarget,
+        targetType: hasValidTarget
+            ? comment.targetType
+            : CollaborationTargetType.project,
+        clearAuthorId: comment.authorId != null &&
+            !validMemberIds.contains(comment.authorId),
+        clearAssigneeId: comment.assigneeId != null &&
+            !validMemberIds.contains(comment.assigneeId),
+      );
+    }).toList(growable: false);
+
     final normalizedBudgetItems = budgetItems.map((item) {
       return item.copyWith(
         clearSceneId:
@@ -820,6 +1009,11 @@ class FilmDocument {
       editVersions: normalizedVersions,
       postProductionTasks: normalizedPostTasks,
       missingMaterials: normalizedMissingMaterials,
+      projectMembers: projectMembers,
+      collaborationComments: normalizedComments,
+      projectChangeLog: projectChangeLog,
+      projectCheckpoints: projectCheckpoints,
+      versioningSettings: versioningSettings,
       budgetCurrency: budgetCurrency,
       goals: goals,
     );

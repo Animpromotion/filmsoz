@@ -12,6 +12,8 @@ import 'package:filmsoz_studio/features/screenplay/postproduction/postproduction
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
 import 'package:filmsoz_studio/features/screenplay/shooting_control/shooting_control.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
+import 'package:filmsoz_studio/features/screenplay/versioning/project_versioning.dart';
+import 'package:filmsoz_studio/features/screenplay/versioning/project_versioning_file_service.dart';
 import 'package:path/path.dart' as path;
 
 class BlockMergeResult {
@@ -91,13 +93,18 @@ class SceneDeletionResult {
 }
 
 class ScreenplayEditorController extends ChangeNotifier {
-  ScreenplayEditorController({LocalStorageService? storageService})
-      : _storageService = storageService ?? LocalStorageService();
+  ScreenplayEditorController({
+    LocalStorageService? storageService,
+    ProjectVersioningFileService? versioningFileService,
+  })  : _storageService = storageService ?? LocalStorageService(),
+        _versioningFileService =
+            versioningFileService ?? const ProjectVersioningFileService();
 
   static const int _historyLimit = 100;
   static const Duration _typingGroupDelay = Duration(milliseconds: 850);
 
   final LocalStorageService _storageService;
+  final ProjectVersioningFileService _versioningFileService;
 
   FilmDocument _document = FilmDocument.empty();
   final List<FilmDocument> _undoStack = <FilmDocument>[];
@@ -106,6 +113,7 @@ class ScreenplayEditorController extends ChangeNotifier {
   Timer? _periodicSaveTimer;
   Timer? _debouncedSaveTimer;
   Timer? _typingGroupTimer;
+  Timer? _automaticBackupTimer;
 
   bool _isInitialized = false;
   bool _isLoading = true;
@@ -114,13 +122,16 @@ class ScreenplayEditorController extends ChangeNotifier {
   bool _hasPendingAutosave = false;
   bool _saveRequestedWhileSaving = false;
   bool _isDisposed = false;
+  bool _isCreatingAutomaticBackup = false;
 
   int _idCounter = 0;
   int _revision = 0;
+  int _lastAutomaticBackupRevision = -1;
   String? _typingBlockId;
 
   DateTime? _lastSavedAt;
   DateTime? _lastProjectSavedAt;
+  DateTime? _lastAutomaticBackupAt;
   String? _lastError;
   String? _storagePath;
   String? _projectPath;
@@ -140,6 +151,8 @@ class ScreenplayEditorController extends ChangeNotifier {
   String? get storagePath => _storagePath;
   String? get projectPath => _projectPath;
   String get projectName => _projectName;
+  DateTime? get lastAutomaticBackupAt => _lastAutomaticBackupAt;
+  bool get isCreatingAutomaticBackup => _isCreatingAutomaticBackup;
 
   Future<void> initialize() async {
     if (_isInitialized) {
@@ -182,6 +195,8 @@ class ScreenplayEditorController extends ChangeNotifier {
       _isLoading = false;
       _hasPendingAutosave = false;
       _startPeriodicSave();
+      _startAutomaticBackupTimer();
+      _lastAutomaticBackupAt ??= DateTime.now();
       _notifySafely();
     }
   }
@@ -2462,6 +2477,308 @@ class ScreenplayEditorController extends ChangeNotifier {
     return true;
   }
 
+  ProjectMember upsertProjectMember(ProjectMember member) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final index = _document.projectMembers.indexWhere(
+      (item) => item.id == member.id,
+    );
+    final normalized = member.copyWith(
+      name: member.name.trim().isEmpty ? 'Участник' : member.name.trim(),
+      role: member.role.trim(),
+      email: member.email.trim(),
+      notes: member.notes.trim(),
+    );
+
+    if (index == -1) {
+      _document.projectMembers.add(normalized);
+      _appendChangeLog(
+        'Добавлен участник команды',
+        details: normalized.name,
+      );
+    } else {
+      _document.projectMembers[index] = normalized;
+      _appendChangeLog(
+        'Обновлена карточка участника',
+        details: normalized.name,
+      );
+    }
+
+    _markDocumentChanged();
+    return normalized;
+  }
+
+  bool deleteProjectMember(String memberId) {
+    final index = _document.projectMembers.indexWhere(
+      (member) => member.id == memberId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final removed = _document.projectMembers.removeAt(index);
+
+    final normalizedComments = _document.collaborationComments.map((comment) {
+      return comment.copyWith(
+        clearAuthorId: comment.authorId == memberId,
+        clearAssigneeId: comment.assigneeId == memberId,
+      );
+    }).toList(growable: false);
+    _document.collaborationComments
+      ..clear()
+      ..addAll(normalizedComments);
+
+    _appendChangeLog(
+      'Удалён участник команды',
+      details: removed.name,
+    );
+    _markDocumentChanged();
+    return true;
+  }
+
+  CollaborationComment upsertCollaborationComment(
+    CollaborationComment comment,
+  ) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final index = _document.collaborationComments.indexWhere(
+      (item) => item.id == comment.id,
+    );
+    final now = DateTime.now().toUtc().toIso8601String();
+    final normalized = comment.copyWith(
+      text: comment.text.trim(),
+      createdAt: comment.createdAt.trim().isEmpty ? now : comment.createdAt,
+      updatedAt: now,
+    );
+
+    if (index == -1) {
+      _document.collaborationComments.add(normalized);
+      _appendChangeLog(
+        'Добавлен комментарий',
+        details: normalized.text,
+        actorId: normalized.authorId,
+      );
+    } else {
+      _document.collaborationComments[index] = normalized;
+      _appendChangeLog(
+        'Обновлён комментарий',
+        details: normalized.text,
+        actorId: normalized.authorId,
+      );
+    }
+
+    _markDocumentChanged();
+    return normalized;
+  }
+
+  bool deleteCollaborationComment(String commentId) {
+    final index = _document.collaborationComments.indexWhere(
+      (comment) => comment.id == commentId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final removed = _document.collaborationComments.removeAt(index);
+    _appendChangeLog(
+      'Удалён комментарий',
+      details: removed.text,
+    );
+    _markDocumentChanged();
+    return true;
+  }
+
+  ProjectCheckpoint createProjectCheckpoint({
+    required String name,
+    String note = '',
+    String? authorId,
+  }) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final now = DateTime.now().toUtc();
+    final checkpoint = ProjectCheckpoint(
+      id: 'checkpoint_${now.microsecondsSinceEpoch}',
+      name: name.trim().isEmpty ? 'Контрольная версия' : name.trim(),
+      note: note.trim(),
+      authorId: authorId,
+      createdAt: now.toIso8601String(),
+      snapshot: _document.toJson(includeCheckpoints: false),
+    );
+    _document.projectCheckpoints.add(checkpoint);
+    _appendChangeLog(
+      'Создана контрольная версия',
+      details: checkpoint.name,
+      actorId: authorId,
+    );
+    _markDocumentChanged();
+    return checkpoint;
+  }
+
+  bool restoreProjectCheckpoint(String checkpointId) {
+    final checkpoint = _document.projectCheckpointById(checkpointId);
+
+    if (checkpoint == null || checkpoint.snapshot.isEmpty) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final existingCheckpoints = List<ProjectCheckpoint>.of(
+      _document.projectCheckpoints,
+    );
+    final restored = FilmDocument.fromJson(checkpoint.snapshot);
+    restored.projectCheckpoints
+      ..clear()
+      ..addAll(existingCheckpoints);
+    _document = restored;
+    _appendChangeLog(
+      'Восстановлена контрольная версия',
+      details: checkpoint.name,
+      actorId: checkpoint.authorId,
+    );
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deleteProjectCheckpoint(String checkpointId) {
+    final index = _document.projectCheckpoints.indexWhere(
+      (checkpoint) => checkpoint.id == checkpointId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final removed = _document.projectCheckpoints.removeAt(index);
+    _appendChangeLog(
+      'Удалена контрольная версия',
+      details: removed.name,
+    );
+    _markDocumentChanged();
+    return true;
+  }
+
+  void updateVersioningSettings(ProjectVersioningSettings settings) {
+    final normalized = settings.copyWith();
+
+    if (_document.versioningSettings.autoBackupMinutes ==
+            normalized.autoBackupMinutes &&
+        _document.versioningSettings.maxAutomaticBackups ==
+            normalized.maxAutomaticBackups &&
+        _document.versioningSettings.teamPackageBaseFingerprint ==
+            normalized.teamPackageBaseFingerprint) {
+      return;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.versioningSettings = normalized;
+    _appendChangeLog(
+      'Изменены настройки резервных копий',
+      details: 'Каждые ${normalized.autoBackupMinutes} мин., '
+          'хранить ${normalized.maxAutomaticBackups}',
+    );
+    _markDocumentChanged();
+  }
+
+  void replaceWithVersionedDocument(
+    FilmDocument document, {
+    required String summary,
+    bool preserveCurrentCheckpoints = true,
+  }) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final checkpoints = preserveCurrentCheckpoints
+        ? List<ProjectCheckpoint>.of(_document.projectCheckpoints)
+        : const <ProjectCheckpoint>[];
+    final replacement = _cloneDocument(document);
+
+    if (preserveCurrentCheckpoints) {
+      replacement.projectCheckpoints
+        ..clear()
+        ..addAll(checkpoints);
+    }
+
+    _document = replacement;
+    _appendChangeLog(summary);
+    _markDocumentChanged();
+  }
+
+  Future<String?> createAutomaticBackupNow() async {
+    if (_isCreatingAutomaticBackup || _isDisposed) {
+      return null;
+    }
+
+    _isCreatingAutomaticBackup = true;
+    _notifySafely();
+
+    try {
+      final snapshot = _cloneDocument(_document);
+      final result = await _versioningFileService.createAutomaticBackup(
+        document: snapshot,
+        projectName: _projectName,
+        projectPath: _projectPath,
+        maxBackups: snapshot.versioningSettings.maxAutomaticBackups,
+      );
+      _lastAutomaticBackupAt = DateTime.now();
+      _lastAutomaticBackupRevision = _revision;
+      return result;
+    } catch (error) {
+      _lastError = 'Ошибка резервного копирования: $error';
+      return null;
+    } finally {
+      _isCreatingAutomaticBackup = false;
+      _notifySafely();
+    }
+  }
+
+  void recordVersioningChange({
+    required String summary,
+    String details = '',
+    String? actorId,
+  }) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _appendChangeLog(
+      summary,
+      details: details,
+      actorId: actorId,
+    );
+    _markDocumentChanged();
+  }
+
+  void _appendChangeLog(
+    String summary, {
+    String details = '',
+    String? actorId,
+  }) {
+    final timestamp = DateTime.now().toUtc();
+    _document.projectChangeLog.add(
+      ProjectChangeEntry(
+        id: 'change_${timestamp.microsecondsSinceEpoch}_${_idCounter++}',
+        summary: summary,
+        details: details.trim(),
+        actorId: actorId,
+        createdAt: timestamp.toIso8601String(),
+      ),
+    );
+
+    while (_document.projectChangeLog.length > 500) {
+      _document.projectChangeLog.removeAt(0);
+    }
+  }
+
   void createNewProject() {
     _finishTypingGroup();
     _document = FilmDocument.empty();
@@ -2469,6 +2786,8 @@ class ScreenplayEditorController extends ChangeNotifier {
     _projectName = 'Без названия';
     _storagePath = null;
     _lastProjectSavedAt = null;
+    _lastAutomaticBackupAt = DateTime.now();
+    _lastAutomaticBackupRevision = -1;
     _lastError = null;
     _isDirty = false;
     _hasPendingAutosave = true;
@@ -2491,6 +2810,8 @@ class ScreenplayEditorController extends ChangeNotifier {
         : 'Импортированный сценарий';
     _storagePath = null;
     _lastProjectSavedAt = null;
+    _lastAutomaticBackupAt = DateTime.now();
+    _lastAutomaticBackupRevision = -1;
     _lastError = null;
     _isDirty = true;
     _hasPendingAutosave = true;
@@ -2522,6 +2843,8 @@ class ScreenplayEditorController extends ChangeNotifier {
       _projectName = path.basenameWithoutExtension(normalizedPath);
       _storagePath = normalizedPath;
       _lastProjectSavedAt = DateTime.now();
+      _lastAutomaticBackupAt = DateTime.now();
+      _lastAutomaticBackupRevision = _revision;
       _isDirty = false;
       _hasPendingAutosave = true;
       _revision++;
@@ -2734,6 +3057,11 @@ class ScreenplayEditorController extends ChangeNotifier {
       editVersions: source.editVersions,
       postProductionTasks: source.postProductionTasks,
       missingMaterials: source.missingMaterials,
+      projectMembers: source.projectMembers,
+      collaborationComments: source.collaborationComments,
+      projectChangeLog: source.projectChangeLog,
+      projectCheckpoints: source.projectCheckpoints,
+      versioningSettings: source.versioningSettings,
       budgetCurrency: source.budgetCurrency,
       goals: source.goals,
     );
@@ -2871,6 +3199,42 @@ class ScreenplayEditorController extends ChangeNotifier {
       ..clear()
       ..addAll(normalizedMissingMaterials);
 
+    final validMemberIds =
+        _document.projectMembers.map((member) => member.id).toSet();
+    final validTakeIds = _document.shotTakes.values
+        .expand((takes) => takes)
+        .map((take) => take.id)
+        .toSet();
+    final validTaskIds =
+        _document.postProductionTasks.map((task) => task.id).toSet();
+    final normalizedComments = _document.collaborationComments.map((comment) {
+      final hasValidTarget = switch (comment.targetType) {
+        CollaborationTargetType.project => true,
+        CollaborationTargetType.scene =>
+          comment.targetId != null && validSceneIds.contains(comment.targetId),
+        CollaborationTargetType.shot =>
+          comment.targetId != null && validShotIds.contains(comment.targetId),
+        CollaborationTargetType.take =>
+          comment.targetId != null && validTakeIds.contains(comment.targetId),
+        CollaborationTargetType.task =>
+          comment.targetId != null && validTaskIds.contains(comment.targetId),
+      };
+
+      return comment.copyWith(
+        clearTargetId: !hasValidTarget,
+        targetType: hasValidTarget
+            ? comment.targetType
+            : CollaborationTargetType.project,
+        clearAuthorId: comment.authorId != null &&
+            !validMemberIds.contains(comment.authorId),
+        clearAssigneeId: comment.assigneeId != null &&
+            !validMemberIds.contains(comment.assigneeId),
+      );
+    }).toList(growable: false);
+    _document.collaborationComments
+      ..clear()
+      ..addAll(normalizedComments);
+
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.copyWith(
         clearSceneId:
@@ -2903,6 +3267,35 @@ class ScreenplayEditorController extends ChangeNotifier {
     );
   }
 
+  void _startAutomaticBackupTimer() {
+    _automaticBackupTimer?.cancel();
+    _automaticBackupTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(_maybeCreateAutomaticBackup()),
+    );
+  }
+
+  Future<void> _maybeCreateAutomaticBackup() async {
+    if (_isDisposed ||
+        !_isInitialized ||
+        _isCreatingAutomaticBackup ||
+        _revision == _lastAutomaticBackupRevision) {
+      return;
+    }
+
+    final interval = Duration(
+      minutes: _document.versioningSettings.autoBackupMinutes,
+    );
+    final lastBackup = _lastAutomaticBackupAt;
+
+    if (lastBackup != null &&
+        DateTime.now().difference(lastBackup) < interval) {
+      return;
+    }
+
+    await createAutomaticBackupNow();
+  }
+
   Future<void> _waitForActiveSave() async {
     while (_isSaving && !_isDisposed) {
       await Future<void>.delayed(const Duration(milliseconds: 40));
@@ -2926,6 +3319,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     _periodicSaveTimer?.cancel();
     _debouncedSaveTimer?.cancel();
     _typingGroupTimer?.cancel();
+    _automaticBackupTimer?.cancel();
     super.dispose();
   }
 }
