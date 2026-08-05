@@ -16,9 +16,12 @@ class ProjectFileService {
   static const String _settingsFolderName = 'Filmsoz Studio';
   static const String _recentProjectsFileName = 'recent_projects.json';
 
-  Future<String?> chooseOpenProject() async {
+  Future<String?> chooseOpenProject({String? initialDirectory}) async {
     final file = await openFile(
       acceptedTypeGroups: const <XTypeGroup>[_filmsozTypeGroup],
+      initialDirectory: initialDirectory?.trim().isEmpty == true
+          ? null
+          : initialDirectory?.trim(),
       confirmButtonText: 'Открыть',
     );
 
@@ -27,6 +30,7 @@ class ProjectFileService {
 
   Future<String?> chooseSaveProject({
     required String suggestedName,
+    String? initialDirectory,
   }) async {
     final cleanName = suggestedName.trim().isEmpty
         ? 'Без названия'
@@ -34,6 +38,9 @@ class ProjectFileService {
 
     final location = await getSaveLocation(
       acceptedTypeGroups: const <XTypeGroup>[_filmsozTypeGroup],
+      initialDirectory: initialDirectory?.trim().isEmpty == true
+          ? null
+          : initialDirectory?.trim(),
       suggestedName: '$cleanName.filmsoz',
       confirmButtonText: 'Сохранить',
       canCreateDirectories: true,

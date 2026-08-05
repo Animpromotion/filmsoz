@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:filmsoz_studio/core/release/app_info.dart';
+import 'package:filmsoz_studio/core/release/project_migration_service.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
@@ -155,7 +157,7 @@ class LocalStorageService {
 
     final payload = <String, dynamic>{
       'format': 'filmsoz',
-      'version': 2,
+      'version': FilmsozAppInfo.projectFormatVersion,
       'savedAt': DateTime.now().toUtc().toIso8601String(),
       'project': <String, dynamic>{
         'path': projectPath,
@@ -184,15 +186,8 @@ class LocalStorageService {
   Future<StoredFilmsozProject> _readStoredProject(File file) async {
     final jsonText = await file.readAsString(encoding: utf8);
     final decoded = jsonDecode(jsonText);
-
-    if (decoded is! Map) {
-      throw const FormatException('Filmsoz file has an invalid format.');
-    }
-
-    final root = decoded.map(
-      (key, value) => MapEntry(key.toString(), value),
-    );
-
+    final migration = const FilmsozProjectMigrationService().migrate(decoded);
+    final root = migration.root;
     final rawDocument = root['document'];
     final FilmDocument document;
 

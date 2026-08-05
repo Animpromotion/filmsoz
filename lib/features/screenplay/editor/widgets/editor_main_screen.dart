@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:filmsoz_studio/features/screenplay/creative/creative_library_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/development/production_report_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/development/scene_board_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/development/screenplay_development_service.dart';
@@ -358,6 +359,14 @@ class _EditorMainScreenState extends State<EditorMainScreen>
         isShiftPressed &&
         key == LogicalKeyboardKey.keyH) {
       unawaited(_showProjectVersioning());
+      return KeyEventResult.handled;
+    }
+
+    if (isControlPressed &&
+        !isAltPressed &&
+        isShiftPressed &&
+        key == LogicalKeyboardKey.keyI) {
+      unawaited(_showCreativeLibrary());
       return KeyEventResult.handled;
     }
 
@@ -1994,6 +2003,50 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     );
   }
 
+  Future<void> _showCreativeLibrary() async {
+    final request = await showDialog<CreativeMaterialInsertRequest>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return CreativeLibraryDialog(
+          controller: _controller,
+          initialSceneId: _activeSceneId,
+        );
+      },
+    );
+
+    if (request == null || !mounted) {
+      return;
+    }
+
+    final result = _controller.insertCreativeMaterialText(
+      materialId: request.materialId,
+      text: request.text,
+      afterBlockId: _currentInsertionAnchorId(),
+    );
+
+    if (result == null) {
+      _showOperationMessage('Не удалось вставить материал в сценарий.');
+      return;
+    }
+
+    setState(() {
+      _selectedBlockIds
+        ..clear()
+        ..addAll(result.insertedBlockIds);
+      _selectionAnchorId = result.focusBlockId;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      _focusBlock(result.focusBlockId, cursorAtEnd: true);
+      _showOperationMessage('Материал вставлен в сценарий');
+    });
+  }
+
   Future<void> _showCharacterStatistics() async {
     final statistics = _productivityService.characterStatistics(
       _controller.document,
@@ -3235,6 +3288,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           shift: true,
         ): () => unawaited(_showProjectVersioning()),
         const SingleActivator(
+          LogicalKeyboardKey.keyI,
+          control: true,
+          shift: true,
+        ): () => unawaited(_showCreativeLibrary()),
+        const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
           alt: true,
@@ -3331,6 +3389,9 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   },
                   onOpenVersioning: () {
                     unawaited(_showProjectVersioning());
+                  },
+                  onOpenCreativeLibrary: () {
+                    unawaited(_showCreativeLibrary());
                   },
                   onUndo: _undo,
                   onRedo: _redo,

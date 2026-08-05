@@ -1,3 +1,4 @@
+import 'package:filmsoz_studio/features/screenplay/creative/creative_material.dart';
 import 'package:filmsoz_studio/features/screenplay/development/scene_development.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
@@ -30,6 +31,7 @@ class FilmDocument {
     List<CollaborationComment>? collaborationComments,
     List<ProjectChangeEntry>? projectChangeLog,
     List<ProjectCheckpoint>? projectCheckpoints,
+    List<CreativeMaterial>? creativeMaterials,
     ProjectVersioningSettings? versioningSettings,
     String budgetCurrency = 'TJS',
     ScreenplayGoals? goals,
@@ -91,6 +93,9 @@ class FilmDocument {
         projectCheckpoints = List<ProjectCheckpoint>.of(
           projectCheckpoints ?? const <ProjectCheckpoint>[],
         ),
+        creativeMaterials = List<CreativeMaterial>.of(
+          creativeMaterials ?? const <CreativeMaterial>[],
+        ),
         versioningSettings =
             versioningSettings ?? const ProjectVersioningSettings(),
         budgetCurrency = budgetCurrency.trim().isEmpty
@@ -117,6 +122,7 @@ class FilmDocument {
   final List<CollaborationComment> collaborationComments;
   final List<ProjectChangeEntry> projectChangeLog;
   final List<ProjectCheckpoint> projectCheckpoints;
+  final List<CreativeMaterial> creativeMaterials;
   ProjectVersioningSettings versioningSettings;
   String budgetCurrency;
   ScreenplayGoals goals;
@@ -334,6 +340,16 @@ class FilmDocument {
     return null;
   }
 
+  CreativeMaterial? creativeMaterialById(String materialId) {
+    for (final material in creativeMaterials) {
+      if (material.id == materialId) {
+        return material;
+      }
+    }
+
+    return null;
+  }
+
   ShootingDayPlan? shootingDayById(String dayId) {
     for (final day in shootingDays) {
       if (day.id == dayId) {
@@ -403,6 +419,9 @@ class FilmDocument {
         'projectCheckpoints': projectCheckpoints
             .map((checkpoint) => checkpoint.toJson())
             .toList(growable: false),
+      'creativeMaterials': creativeMaterials
+          .map((material) => material.toJson())
+          .toList(growable: false),
       'versioningSettings': versioningSettings.toJson(),
       'budgetCurrency': budgetCurrency,
       'goals': goals.toJson(),
@@ -823,6 +842,25 @@ class FilmDocument {
       }
     }
 
+    final creativeMaterials = <CreativeMaterial>[];
+    final rawCreativeMaterials = json['creativeMaterials'];
+
+    if (rawCreativeMaterials is List) {
+      for (final rawMaterial in rawCreativeMaterials) {
+        if (rawMaterial is! Map) {
+          continue;
+        }
+
+        creativeMaterials.add(
+          CreativeMaterial.fromJson(
+            rawMaterial.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
     ProjectVersioningSettings versioningSettings =
         const ProjectVersioningSettings();
     final rawVersioningSettings = json['versioningSettings'];
@@ -856,6 +894,20 @@ class FilmDocument {
         .where((block) => block.type == BlockType.sceneHeading)
         .map((block) => block.id)
         .toSet();
+    final validBlockIds = blocks.map((block) => block.id).toSet();
+    final normalizedCreativeMaterials = creativeMaterials.map((material) {
+      return material.copyWith(
+        linkedSceneIds: material.linkedSceneIds
+            .where(validSceneIds.contains)
+            .toSet()
+            .toList(growable: false),
+        usedBlockIds: material.usedBlockIds
+            .where(validBlockIds.contains)
+            .toSet()
+            .toList(growable: false),
+      );
+    }).toList(growable: false);
+
     notes.removeWhere((sceneId, _) => !validSceneIds.contains(sceneId));
     development.removeWhere(
       (sceneId, _) => !validSceneIds.contains(sceneId),
@@ -1013,6 +1065,7 @@ class FilmDocument {
       collaborationComments: normalizedComments,
       projectChangeLog: projectChangeLog,
       projectCheckpoints: projectCheckpoints,
+      creativeMaterials: normalizedCreativeMaterials,
       versioningSettings: versioningSettings,
       budgetCurrency: budgetCurrency,
       goals: goals,

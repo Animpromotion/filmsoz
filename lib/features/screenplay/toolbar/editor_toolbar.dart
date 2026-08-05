@@ -23,6 +23,7 @@ class EditorToolbar extends StatelessWidget {
     required this.onOpenShootingControl,
     required this.onOpenPostProduction,
     required this.onOpenVersioning,
+    required this.onOpenCreativeLibrary,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -50,6 +51,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onOpenShootingControl;
   final VoidCallback onOpenPostProduction;
   final VoidCallback onOpenVersioning;
+  final VoidCallback onOpenCreativeLibrary;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -108,6 +110,11 @@ class EditorToolbar extends StatelessWidget {
                     'Версии',
                     onPressed: onOpenVersioning,
                     tooltip: 'Версии и командная работа (Ctrl+Shift+H)',
+                  ),
+                  _buildMenuButton(
+                    'Материалы',
+                    onPressed: onOpenCreativeLibrary,
+                    tooltip: 'Творческая база (Ctrl+Shift+I)',
                   ),
                   _buildMenuButton('Формат'),
                   _buildMenuButton('AI'),

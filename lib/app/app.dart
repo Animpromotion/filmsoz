@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:filmsoz_studio/app/theme.dart';
+import 'package:filmsoz_studio/core/release/app_info.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/widgets/editor_main_screen.dart';
+import 'package:flutter/material.dart';
 
 class FilmnomaApp extends StatelessWidget {
   const FilmnomaApp({super.key});
@@ -8,7 +9,7 @@ class FilmnomaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Filmsoz Studio v2',
+      title: FilmsozAppInfo.name,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       home: const EditorMainScreen(),

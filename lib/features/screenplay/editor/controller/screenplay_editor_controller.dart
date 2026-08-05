@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:filmsoz_studio/features/screenplay/creative/creative_material.dart';
 import 'package:filmsoz_studio/features/screenplay/development/scene_development.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
@@ -2477,6 +2478,153 @@ class ScreenplayEditorController extends ChangeNotifier {
     return true;
   }
 
+  CreativeMaterial upsertCreativeMaterial(CreativeMaterial material) {
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final index = _document.creativeMaterials.indexWhere(
+      (item) => item.id == material.id,
+    );
+    final normalized = material.copyWith(
+      title: material.title.trim().isEmpty
+          ? material.type.label
+          : material.title.trim(),
+      body: material.body.trim(),
+      source: material.source.trim(),
+      url: material.url.trim(),
+      folder:
+          material.folder.trim().isEmpty ? 'Без папки' : material.folder.trim(),
+      tags: material.tags
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet()
+          .toList(growable: false),
+      linkedSceneIds: material.linkedSceneIds
+          .where((sceneId) => _document.sceneById(sceneId) != null)
+          .toSet()
+          .toList(growable: false),
+      linkedCharacterNames: material.linkedCharacterNames
+          .map((item) => item.trim().toUpperCase())
+          .where((item) => item.isNotEmpty)
+          .toSet()
+          .toList(growable: false),
+      createdAt: material.createdAt.trim().isEmpty ? now : material.createdAt,
+      updatedAt: now,
+    );
+
+    if (index == -1) {
+      _document.creativeMaterials.add(normalized);
+      _appendChangeLog(
+        'Добавлен материал в творческую базу',
+        details: normalized.title,
+      );
+    } else {
+      _document.creativeMaterials[index] = normalized;
+      _appendChangeLog(
+        'Обновлён материал творческой базы',
+        details: normalized.title,
+      );
+    }
+
+    _markDocumentChanged();
+    return normalized;
+  }
+
+  CreativeMaterial? duplicateCreativeMaterial(String materialId) {
+    final source = _document.creativeMaterialById(materialId);
+
+    if (source == null) {
+      return null;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final now = DateTime.now().toUtc();
+    final duplicate = source.copyWith(
+      id: 'material_${now.microsecondsSinceEpoch}',
+      title: '${source.title} — копия',
+      usedBlockIds: const <String>[],
+      createdAt: now.toIso8601String(),
+      updatedAt: now.toIso8601String(),
+    );
+    _document.creativeMaterials.add(duplicate);
+    _appendChangeLog(
+      'Дублирован материал творческой базы',
+      details: duplicate.title,
+    );
+    _markDocumentChanged();
+    return duplicate;
+  }
+
+  bool deleteCreativeMaterial(String materialId) {
+    final index = _document.creativeMaterials.indexWhere(
+      (material) => material.id == materialId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    final removed = _document.creativeMaterials.removeAt(index);
+    _appendChangeLog(
+      'Удалён материал из творческой базы',
+      details: removed.title,
+    );
+    _markDocumentChanged();
+    return true;
+  }
+
+  BlockInsertionResult? insertCreativeMaterialText({
+    required String materialId,
+    required String text,
+    String? afterBlockId,
+  }) {
+    final materialIndex = _document.creativeMaterials.indexWhere(
+      (material) => material.id == materialId,
+    );
+    final normalizedText = text.trim();
+
+    if (materialIndex == -1 || normalizedText.isEmpty) {
+      return null;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    final afterIndex = afterBlockId == null
+        ? -1
+        : _document.blocks.indexWhere((block) => block.id == afterBlockId);
+    final insertionIndex =
+        afterIndex == -1 ? _document.blocks.length : afterIndex + 1;
+    final block = FilmBlock(
+      id: _generateBlockId(),
+      type: BlockType.action,
+      text: normalizedText,
+    );
+    _document.blocks.insert(insertionIndex, block);
+
+    final material = _document.creativeMaterials[materialIndex];
+    _document.creativeMaterials[materialIndex] = material.copyWith(
+      usedBlockIds: <String>{...material.usedBlockIds, block.id}.toList(
+        growable: false,
+      ),
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    _appendChangeLog(
+      'Материал вставлен в сценарий',
+      details: material.title,
+    );
+    _markDocumentChanged();
+
+    return BlockInsertionResult(
+      insertedBlockIds: <String>[block.id],
+      focusBlockId: block.id,
+    );
+  }
+
   ProjectMember upsertProjectMember(ProjectMember member) {
     _finishTypingGroup();
     _pushUndoSnapshot();
@@ -3061,6 +3209,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       collaborationComments: source.collaborationComments,
       projectChangeLog: source.projectChangeLog,
       projectCheckpoints: source.projectCheckpoints,
+      creativeMaterials: source.creativeMaterials,
       versioningSettings: source.versioningSettings,
       budgetCurrency: source.budgetCurrency,
       goals: source.goals,
@@ -3234,6 +3383,25 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.collaborationComments
       ..clear()
       ..addAll(normalizedComments);
+
+    final validBlockIds = _document.blocks.map((block) => block.id).toSet();
+    final normalizedCreativeMaterials = _document.creativeMaterials.map(
+      (material) {
+        return material.copyWith(
+          linkedSceneIds: material.linkedSceneIds
+              .where(validSceneIds.contains)
+              .toSet()
+              .toList(growable: false),
+          usedBlockIds: material.usedBlockIds
+              .where(validBlockIds.contains)
+              .toSet()
+              .toList(growable: false),
+        );
+      },
+    ).toList(growable: false);
+    _document.creativeMaterials
+      ..clear()
+      ..addAll(normalizedCreativeMaterials);
 
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.copyWith(
