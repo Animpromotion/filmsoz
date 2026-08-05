@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:filmsoz_studio/core/release/app_settings.dart';
+import 'package:filmsoz_studio/core/release/app_settings_service.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/editor/controller/screenplay_editor_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -61,6 +65,31 @@ void main() {
       controller.setBlockType(block.id, BlockType.action);
 
       expect(controller.canRedo, isFalse);
+    });
+  });
+
+  group('ScreenplayEditorController application settings', () {
+    test('reloadApplicationSettings loads saved autosave interval', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'filmsoz_controller_settings_',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+
+      final settingsService = FilmsozAppSettingsService(
+        rootDirectoryPath: directory.path,
+      );
+      await settingsService.save(
+        const FilmsozAppSettings(autosaveSeconds: 120),
+      );
+
+      final controller = ScreenplayEditorController(
+        settingsService: settingsService,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.reloadApplicationSettings();
+
+      expect(controller.applicationSettings.autosaveSeconds, 120);
     });
   });
 }

@@ -21,7 +21,7 @@ void main() {
       ],
       sceneNotes: const <String, String>{'missing_scene': 'Старая заметка'},
     );
-    final service = const FilmsozProjectDiagnosticsService();
+    const service = FilmsozProjectDiagnosticsService();
     final report = service.inspect(document);
 
     expect(report.hasIssues, isTrue);

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:filmsoz_studio/core/release/app_settings.dart';
+import 'package:filmsoz_studio/core/release/app_settings_service.dart';
 import 'package:filmsoz_studio/features/screenplay/creative/creative_material.dart';
 import 'package:filmsoz_studio/features/screenplay/development/scene_development.dart';
 import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
@@ -97,15 +99,18 @@ class ScreenplayEditorController extends ChangeNotifier {
   ScreenplayEditorController({
     LocalStorageService? storageService,
     ProjectVersioningFileService? versioningFileService,
+    FilmsozAppSettingsService? settingsService,
   })  : _storageService = storageService ?? LocalStorageService(),
         _versioningFileService =
-            versioningFileService ?? const ProjectVersioningFileService();
+            versioningFileService ?? const ProjectVersioningFileService(),
+        _settingsService = settingsService ?? const FilmsozAppSettingsService();
 
   static const int _historyLimit = 100;
   static const Duration _typingGroupDelay = Duration(milliseconds: 850);
 
   final LocalStorageService _storageService;
   final ProjectVersioningFileService _versioningFileService;
+  final FilmsozAppSettingsService _settingsService;
 
   FilmDocument _document = FilmDocument.empty();
   final List<FilmDocument> _undoStack = <FilmDocument>[];
@@ -137,6 +142,7 @@ class ScreenplayEditorController extends ChangeNotifier {
   String? _storagePath;
   String? _projectPath;
   String _projectName = 'Без названия';
+  FilmsozAppSettings _applicationSettings = const FilmsozAppSettings();
 
   FilmDocument get document => _document;
   bool get isInitialized => _isInitialized;
@@ -154,6 +160,7 @@ class ScreenplayEditorController extends ChangeNotifier {
   String get projectName => _projectName;
   DateTime? get lastAutomaticBackupAt => _lastAutomaticBackupAt;
   bool get isCreatingAutomaticBackup => _isCreatingAutomaticBackup;
+  FilmsozAppSettings get applicationSettings => _applicationSettings;
 
   Future<void> initialize() async {
     if (_isInitialized) {
@@ -163,6 +170,13 @@ class ScreenplayEditorController extends ChangeNotifier {
     _isLoading = true;
     _lastError = null;
     _notifySafely();
+
+    try {
+      _applicationSettings = (await _settingsService.load()).normalized();
+    } catch (error) {
+      _applicationSettings = const FilmsozAppSettings();
+      _lastError = 'Не удалось загрузить настройки приложения: $error';
+    }
 
     try {
       final storedState = await _storageService.loadAutosaveState();
@@ -200,6 +214,17 @@ class ScreenplayEditorController extends ChangeNotifier {
       _lastAutomaticBackupAt ??= DateTime.now();
       _notifySafely();
     }
+  }
+
+  Future<void> reloadApplicationSettings() async {
+    final settings = (await _settingsService.load()).normalized();
+    _applicationSettings = settings;
+
+    if (_isInitialized) {
+      _startPeriodicSave();
+    }
+
+    _notifySafely();
   }
 
   void updateBlockText(String id, String text) {
@@ -3430,7 +3455,7 @@ class ScreenplayEditorController extends ChangeNotifier {
   void _startPeriodicSave() {
     _periodicSaveTimer?.cancel();
     _periodicSaveTimer = Timer.periodic(
-      const Duration(seconds: 30),
+      Duration(seconds: _applicationSettings.autosaveSeconds),
       (_) => unawaited(saveDocument()),
     );
   }

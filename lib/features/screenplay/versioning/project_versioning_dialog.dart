@@ -779,9 +779,9 @@ class _ProjectVersioningDialogState extends State<ProjectVersioningDialog>
             ),
           ),
           const SizedBox(height: 12),
-          Expanded(
+          const Expanded(
             child: Row(
-              children: const <Widget>[
+              children: <Widget>[
                 Expanded(
                   child: _InfoCard(
                     icon: Icons.security_update_good,

@@ -163,7 +163,7 @@ class FilmsozProjectDiagnosticsService {
 
     if (approximateBytes > 50 * 1024 * 1024) {
       issues.add(
-        FilmsozProjectIssue(
+        const FilmsozProjectIssue(
           code: 'large_project',
           message: 'Размер проекта превышает 50 МБ. Рекомендуется оптимизация.',
         ),

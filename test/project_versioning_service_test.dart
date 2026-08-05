@@ -94,7 +94,7 @@ void main() {
     addTearDown(() => directory.delete(recursive: true));
     final filePath =
         '${directory.path}${Platform.pathSeparator}team.filmsozpack';
-    final service = const ProjectVersioningFileService();
+    const service = ProjectVersioningFileService();
     final document = FilmDocument.empty();
 
     await service.writeTeamPackage(
