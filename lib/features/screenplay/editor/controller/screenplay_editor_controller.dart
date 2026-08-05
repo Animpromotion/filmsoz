@@ -8,6 +8,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
+import 'package:filmsoz_studio/features/screenplay/postproduction/postproduction.dart';
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
 import 'package:filmsoz_studio/features/screenplay/shooting_control/shooting_control.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
@@ -593,6 +594,7 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.sceneProduction[duplicatedBlocks.first.id] = sourceProduction;
     }
 
+    final duplicatedTakeIds = <String, String>{};
     final sourceShots = _document.storyboardShots[sceneId];
 
     if (sourceShots != null && sourceShots.isNotEmpty) {
@@ -605,18 +607,52 @@ class ScreenplayEditorController extends ChangeNotifier {
         final sourceTakes = _document.shotTakes[sourceShot.id];
 
         if (sourceTakes != null && sourceTakes.isNotEmpty) {
-          _document.shotTakes[duplicatedShotId] = sourceTakes
-              .map(
-                (take) => take.copyWith(
-                  id: 'take_${_generateBlockId()}',
-                ),
-              )
-              .toList(growable: true);
+          final duplicatedTakes = <ShotTake>[];
+
+          for (final take in sourceTakes) {
+            final duplicatedTakeId = 'take_${_generateBlockId()}';
+            duplicatedTakeIds[take.id] = duplicatedTakeId;
+            duplicatedTakes.add(take.copyWith(id: duplicatedTakeId));
+          }
+
+          _document.shotTakes[duplicatedShotId] = duplicatedTakes;
         }
       }
 
       _document.storyboardShots[duplicatedBlocks.first.id] = duplicatedShots;
     }
+
+    final sourcePostProduction = _document.scenePostProduction[sceneId];
+
+    if (sourcePostProduction != null) {
+      final duplicatedPostProduction = sourcePostProduction.copyWith(
+        selectedTakeIds: sourcePostProduction.selectedTakeIds
+            .map((takeId) => duplicatedTakeIds[takeId])
+            .whereType<String>()
+            .toList(growable: false),
+      );
+
+      if (!duplicatedPostProduction.isDefault) {
+        _document.scenePostProduction[duplicatedBlocks.first.id] =
+            duplicatedPostProduction;
+      }
+    }
+
+    final normalizedSequences =
+        _document.postProductionSequences.map((sequence) {
+      final sourceIndex = sequence.sceneIds.indexOf(sceneId);
+
+      if (sourceIndex == -1) {
+        return sequence;
+      }
+
+      final sceneIds = List<String>.of(sequence.sceneIds)
+        ..insert(sourceIndex + 1, duplicatedBlocks.first.id);
+      return sequence.copyWith(sceneIds: sceneIds);
+    }).toList(growable: false);
+    _document.postProductionSequences
+      ..clear()
+      ..addAll(normalizedSequences);
 
     _markDocumentChanged();
 
@@ -649,13 +685,47 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.sceneNotes.remove(sceneId);
     _document.sceneDevelopment.remove(sceneId);
     _document.sceneProduction.remove(sceneId);
+    _document.scenePostProduction.remove(sceneId);
     final removedShots = _document.storyboardShots.remove(sceneId);
+
+    final removedShotIds = <String>{};
 
     if (removedShots != null) {
       for (final shot in removedShots) {
+        removedShotIds.add(shot.id);
         _document.shotTakes.remove(shot.id);
       }
     }
+
+    final normalizedSequences =
+        _document.postProductionSequences.map((sequence) {
+      return sequence.copyWith(
+        sceneIds: sequence.sceneIds
+            .where((assignedSceneId) => assignedSceneId != sceneId)
+            .toList(growable: false),
+      );
+    }).toList(growable: false);
+    _document.postProductionSequences
+      ..clear()
+      ..addAll(normalizedSequences);
+
+    final normalizedPostTasks = _document.postProductionTasks.map((task) {
+      return task.sceneId == sceneId ? task.copyWith(clearSceneId: true) : task;
+    }).toList(growable: false);
+    _document.postProductionTasks
+      ..clear()
+      ..addAll(normalizedPostTasks);
+
+    final normalizedMissingMaterials = _document.missingMaterials.map((item) {
+      return item.copyWith(
+        clearSceneId: item.sceneId == sceneId,
+        clearShotId:
+            item.shotId != null && removedShotIds.contains(item.shotId),
+      );
+    }).toList(growable: false);
+    _document.missingMaterials
+      ..clear()
+      ..addAll(normalizedMissingMaterials);
 
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.sceneId == sceneId ? item.copyWith(clearSceneId: true) : item;
@@ -898,8 +968,34 @@ class ScreenplayEditorController extends ChangeNotifier {
 
     _finishTypingGroup();
     _pushUndoSnapshot();
+    final removedTakeIds = (_document.shotTakes[shotId] ?? const <ShotTake>[])
+        .map((take) => take.id)
+        .toSet();
     shots.removeAt(index);
     _document.shotTakes.remove(shotId);
+
+    final currentPostProduction = _document.scenePostProduction[sceneId];
+
+    if (currentPostProduction != null) {
+      final normalized = currentPostProduction.copyWith(
+        selectedTakeIds: currentPostProduction.selectedTakeIds
+            .where((takeId) => !removedTakeIds.contains(takeId))
+            .toList(growable: false),
+      );
+
+      if (normalized.isDefault) {
+        _document.scenePostProduction.remove(sceneId);
+      } else {
+        _document.scenePostProduction[sceneId] = normalized;
+      }
+    }
+
+    final normalizedMissingMaterials = _document.missingMaterials.map((item) {
+      return item.shotId == shotId ? item.copyWith(clearShotId: true) : item;
+    }).toList(growable: false);
+    _document.missingMaterials
+      ..clear()
+      ..addAll(normalizedMissingMaterials);
 
     if (shots.isEmpty) {
       _document.storyboardShots.remove(sceneId);
@@ -1052,6 +1148,24 @@ class ScreenplayEditorController extends ChangeNotifier {
     _pushUndoSnapshot();
     takes.removeAt(index);
 
+    for (final entry in _document.scenePostProduction.entries.toList()) {
+      if (!entry.value.selectedTakeIds.contains(takeId)) {
+        continue;
+      }
+
+      final normalized = entry.value.copyWith(
+        selectedTakeIds: entry.value.selectedTakeIds
+            .where((selectedId) => selectedId != takeId)
+            .toList(growable: false),
+      );
+
+      if (normalized.isDefault) {
+        _document.scenePostProduction.remove(entry.key);
+      } else {
+        _document.scenePostProduction[entry.key] = normalized;
+      }
+    }
+
     if (takes.isEmpty) {
       _document.shotTakes.remove(shotId);
     }
@@ -1084,6 +1198,395 @@ class ScreenplayEditorController extends ChangeNotifier {
       _document.shootingDayJournals[dayId] = normalized;
     }
 
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool setScenePostProduction(
+    String sceneId,
+    ScenePostProductionData data,
+  ) {
+    if (_document.sceneById(sceneId) == null) {
+      return false;
+    }
+
+    final validTakeIds = _takeIdsForScene(sceneId);
+    final normalized = ScenePostProductionData(
+      status: data.status,
+      progress: data.progress.clamp(0, 100).toInt(),
+      editorNotes: data.editorNotes.trim(),
+      directorNotes: data.directorNotes.trim(),
+      selectedTakeIds: data.selectedTakeIds
+          .where(validTakeIds.contains)
+          .toSet()
+          .toList(growable: false),
+      directorApproval: data.directorApproval,
+      producerApproval: data.producerApproval,
+    );
+    final current = _document.scenePostProductionFor(sceneId);
+
+    if (_sameScenePostProduction(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    if (normalized.isDefault) {
+      _document.scenePostProduction.remove(sceneId);
+    } else {
+      _document.scenePostProduction[sceneId] = normalized;
+    }
+
+    _markDocumentChanged();
+    return true;
+  }
+
+  String createPostProductionSequence({String? title}) {
+    final id = 'sequence_${_generateBlockId()}';
+    final normalizedTitle = title?.trim();
+    final sequence = PostProductionSequence(
+      id: id,
+      title: normalizedTitle == null || normalizedTitle.isEmpty
+          ? 'Монтажный эпизод ${_document.postProductionSequences.length + 1}'
+          : normalizedTitle,
+    );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.postProductionSequences.add(sequence);
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updatePostProductionSequence(PostProductionSequence sequence) {
+    final index = _document.postProductionSequences.indexWhere(
+      (item) => item.id == sequence.id,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    final validSceneIds =
+        _document.sceneSections.map((scene) => scene.id).toSet();
+    final normalized = PostProductionSequence(
+      id: sequence.id,
+      title: sequence.title.trim().isEmpty
+          ? 'Монтажный эпизод'
+          : sequence.title.trim(),
+      sceneIds: sequence.sceneIds
+          .where(validSceneIds.contains)
+          .toSet()
+          .toList(growable: false),
+      notes: sequence.notes.trim(),
+    );
+    final current = _document.postProductionSequences[index];
+
+    if (_samePostProductionSequence(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.postProductionSequences[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deletePostProductionSequence(String sequenceId) {
+    final index = _document.postProductionSequences.indexWhere(
+      (item) => item.id == sequenceId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.postProductionSequences.removeAt(index);
+
+    final normalizedVersions = _document.editVersions.map((version) {
+      return version.sequenceId == sequenceId
+          ? version.copyWith(clearSequenceId: true)
+          : version;
+    }).toList(growable: false);
+    _document.editVersions
+      ..clear()
+      ..addAll(normalizedVersions);
+    _markDocumentChanged();
+    return true;
+  }
+
+  String createEditVersion({String? sequenceId}) {
+    final validSequenceId = _document
+        .postProductionSequenceById(
+          sequenceId ?? '',
+        )
+        ?.id;
+    final versions = _document.editVersions.where(
+      (version) => version.sequenceId == validSequenceId,
+    );
+    var nextVersionNumber = 1;
+
+    for (final version in versions) {
+      if (version.versionNumber >= nextVersionNumber) {
+        nextVersionNumber = version.versionNumber + 1;
+      }
+    }
+
+    final id = 'version_${_generateBlockId()}';
+    final version = EditVersion(
+      id: id,
+      title: 'Версия монтажа $nextVersionNumber',
+      sequenceId: validSequenceId,
+      versionNumber: nextVersionNumber,
+      createdAt: DateTime.now().toIso8601String().split('T').first,
+      isCurrent: true,
+    );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    for (var index = 0; index < _document.editVersions.length; index++) {
+      final other = _document.editVersions[index];
+
+      if (other.sequenceId == validSequenceId && other.isCurrent) {
+        _document.editVersions[index] = other.copyWith(isCurrent: false);
+      }
+    }
+
+    _document.editVersions.add(version);
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updateEditVersion(EditVersion version) {
+    final index = _document.editVersions.indexWhere(
+      (item) => item.id == version.id,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    final validSequenceId = _document
+        .postProductionSequenceById(
+          version.sequenceId ?? '',
+        )
+        ?.id;
+    final normalized = EditVersion(
+      id: version.id,
+      title: version.title.trim().isEmpty
+          ? 'Версия монтажа'
+          : version.title.trim(),
+      sequenceId: validSequenceId,
+      versionNumber: version.versionNumber <= 0 ? 1 : version.versionNumber,
+      application: version.application.trim(),
+      filePath: version.filePath.trim(),
+      createdAt: version.createdAt.trim(),
+      durationSeconds:
+          version.durationSeconds < 0 ? 0 : version.durationSeconds,
+      notes: version.notes.trim(),
+      isCurrent: version.isCurrent,
+    );
+    final current = _document.editVersions[index];
+
+    if (_sameEditVersion(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    if (normalized.isCurrent) {
+      for (var itemIndex = 0;
+          itemIndex < _document.editVersions.length;
+          itemIndex++) {
+        final other = _document.editVersions[itemIndex];
+
+        if (other.id != normalized.id &&
+            other.sequenceId == normalized.sequenceId &&
+            other.isCurrent) {
+          _document.editVersions[itemIndex] = other.copyWith(isCurrent: false);
+        }
+      }
+    }
+
+    _document.editVersions[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deleteEditVersion(String versionId) {
+    final index = _document.editVersions.indexWhere(
+      (item) => item.id == versionId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.editVersions.removeAt(index);
+
+    final normalizedTasks = _document.postProductionTasks.map((task) {
+      return task.versionId == versionId
+          ? task.copyWith(clearVersionId: true)
+          : task;
+    }).toList(growable: false);
+    _document.postProductionTasks
+      ..clear()
+      ..addAll(normalizedTasks);
+    _markDocumentChanged();
+    return true;
+  }
+
+  String createPostProductionTask({String? sceneId}) {
+    final validSceneId = _document.sceneById(sceneId ?? '')?.id;
+    final id = 'post_task_${_generateBlockId()}';
+    final task = PostProductionTask(
+      id: id,
+      title: 'Новая задача',
+      sceneId: validSceneId,
+    );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.postProductionTasks.add(task);
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updatePostProductionTask(PostProductionTask task) {
+    final index = _document.postProductionTasks.indexWhere(
+      (item) => item.id == task.id,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    final validSceneId = _document.sceneById(task.sceneId ?? '')?.id;
+    final validVersionId = _document.editVersionById(task.versionId ?? '')?.id;
+    final progress = task.status == PostTaskStatus.done
+        ? 100
+        : task.progress.clamp(0, 100).toInt();
+    final normalized = PostProductionTask(
+      id: task.id,
+      title: task.title.trim().isEmpty
+          ? 'Задача постпродакшна'
+          : task.title.trim(),
+      department: task.department,
+      status: task.status,
+      priority: task.priority,
+      assignee: task.assignee.trim(),
+      dueDate: task.dueDate.trim(),
+      progress: progress,
+      sceneId: validSceneId,
+      versionId: validVersionId,
+      notes: task.notes.trim(),
+    );
+    final current = _document.postProductionTasks[index];
+
+    if (_samePostProductionTask(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.postProductionTasks[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deletePostProductionTask(String taskId) {
+    final index = _document.postProductionTasks.indexWhere(
+      (item) => item.id == taskId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.postProductionTasks.removeAt(index);
+    _markDocumentChanged();
+    return true;
+  }
+
+  String createMissingMaterial({String? sceneId, String? shotId}) {
+    final validSceneId = _document.sceneById(sceneId ?? '')?.id;
+    final validShotId =
+        _allStoryboardShotIds().contains(shotId) ? shotId : null;
+    final id = 'missing_${_generateBlockId()}';
+    final item = MissingMaterialItem(
+      id: id,
+      title: 'Отсутствующий материал',
+      sceneId: validSceneId,
+      shotId: validShotId,
+    );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.missingMaterials.add(item);
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updateMissingMaterial(MissingMaterialItem item) {
+    final index = _document.missingMaterials.indexWhere(
+      (value) => value.id == item.id,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    final validSceneId = _document.sceneById(item.sceneId ?? '')?.id;
+    final validShotId =
+        _allStoryboardShotIds().contains(item.shotId) ? item.shotId : null;
+    final normalized = MissingMaterialItem(
+      id: item.id,
+      title: item.title.trim().isEmpty
+          ? 'Отсутствующий материал'
+          : item.title.trim(),
+      type: item.type,
+      status: item.status,
+      sceneId: validSceneId,
+      shotId: validShotId,
+      description: item.description.trim(),
+      scheduledDate: item.scheduledDate.trim(),
+      assignee: item.assignee.trim(),
+    );
+    final current = _document.missingMaterials[index];
+
+    if (_sameMissingMaterial(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.missingMaterials[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool deleteMissingMaterial(String itemId) {
+    final index = _document.missingMaterials.indexWhere(
+      (item) => item.id == itemId,
+    );
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.missingMaterials.removeAt(index);
     _markDocumentChanged();
     return true;
   }
@@ -1506,6 +2009,86 @@ class ScreenplayEditorController extends ChangeNotifier {
         first.cameraReport == second.cameraReport &&
         first.soundReport == second.soundReport &&
         first.notes == second.notes;
+  }
+
+  Set<String> _takeIdsForScene(String sceneId) {
+    final takeIds = <String>{};
+
+    for (final shot in _document.storyboardShotsFor(sceneId)) {
+      for (final take in _document.shotTakesFor(shot.id)) {
+        takeIds.add(take.id);
+      }
+    }
+
+    return takeIds;
+  }
+
+  bool _sameScenePostProduction(
+    ScenePostProductionData first,
+    ScenePostProductionData second,
+  ) {
+    return first.status == second.status &&
+        first.progress == second.progress &&
+        first.editorNotes == second.editorNotes &&
+        first.directorNotes == second.directorNotes &&
+        _sameStringLists(first.selectedTakeIds, second.selectedTakeIds) &&
+        first.directorApproval == second.directorApproval &&
+        first.producerApproval == second.producerApproval;
+  }
+
+  bool _samePostProductionSequence(
+    PostProductionSequence first,
+    PostProductionSequence second,
+  ) {
+    return first.id == second.id &&
+        first.title == second.title &&
+        _sameStringLists(first.sceneIds, second.sceneIds) &&
+        first.notes == second.notes;
+  }
+
+  bool _sameEditVersion(EditVersion first, EditVersion second) {
+    return first.id == second.id &&
+        first.title == second.title &&
+        first.sequenceId == second.sequenceId &&
+        first.versionNumber == second.versionNumber &&
+        first.application == second.application &&
+        first.filePath == second.filePath &&
+        first.createdAt == second.createdAt &&
+        first.durationSeconds == second.durationSeconds &&
+        first.notes == second.notes &&
+        first.isCurrent == second.isCurrent;
+  }
+
+  bool _samePostProductionTask(
+    PostProductionTask first,
+    PostProductionTask second,
+  ) {
+    return first.id == second.id &&
+        first.title == second.title &&
+        first.department == second.department &&
+        first.status == second.status &&
+        first.priority == second.priority &&
+        first.assignee == second.assignee &&
+        first.dueDate == second.dueDate &&
+        first.progress == second.progress &&
+        first.sceneId == second.sceneId &&
+        first.versionId == second.versionId &&
+        first.notes == second.notes;
+  }
+
+  bool _sameMissingMaterial(
+    MissingMaterialItem first,
+    MissingMaterialItem second,
+  ) {
+    return first.id == second.id &&
+        first.title == second.title &&
+        first.type == second.type &&
+        first.status == second.status &&
+        first.sceneId == second.sceneId &&
+        first.shotId == second.shotId &&
+        first.description == second.description &&
+        first.scheduledDate == second.scheduledDate &&
+        first.assignee == second.assignee;
   }
 
   StoryboardShot _normalizeStoryboardShot(StoryboardShot shot) {
@@ -2146,6 +2729,11 @@ class ScreenplayEditorController extends ChangeNotifier {
       storyboardShots: source.storyboardShots,
       shotTakes: source.shotTakes,
       shootingDayJournals: source.shootingDayJournals,
+      scenePostProduction: source.scenePostProduction,
+      postProductionSequences: source.postProductionSequences,
+      editVersions: source.editVersions,
+      postProductionTasks: source.postProductionTasks,
+      missingMaterials: source.missingMaterials,
       budgetCurrency: source.budgetCurrency,
       goals: source.goals,
     );
@@ -2174,6 +2762,9 @@ class ScreenplayEditorController extends ChangeNotifier {
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
     _document.sceneProduction.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
+    _document.scenePostProduction.removeWhere(
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
     _document.storyboardShots.removeWhere(
@@ -2216,6 +2807,69 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.shotTakes
       ..clear()
       ..addAll(normalizedTakeMap);
+
+    for (final entry in _document.scenePostProduction.entries.toList()) {
+      final validTakeIds = _takeIdsForScene(entry.key);
+      final normalized = entry.value.copyWith(
+        selectedTakeIds: entry.value.selectedTakeIds
+            .where(validTakeIds.contains)
+            .toList(growable: false),
+      );
+
+      if (normalized.isDefault) {
+        _document.scenePostProduction.remove(entry.key);
+      } else {
+        _document.scenePostProduction[entry.key] = normalized;
+      }
+    }
+
+    final normalizedSequences =
+        _document.postProductionSequences.map((sequence) {
+      return sequence.copyWith(
+        sceneIds: sequence.sceneIds
+            .where(validSceneIds.contains)
+            .toSet()
+            .toList(growable: false),
+      );
+    }).toList(growable: false);
+    _document.postProductionSequences
+      ..clear()
+      ..addAll(normalizedSequences);
+
+    final validSequenceIds = normalizedSequences.map((item) => item.id).toSet();
+    final normalizedVersions = _document.editVersions.map((version) {
+      return version.sequenceId != null &&
+              !validSequenceIds.contains(version.sequenceId)
+          ? version.copyWith(clearSequenceId: true)
+          : version;
+    }).toList(growable: false);
+    _document.editVersions
+      ..clear()
+      ..addAll(normalizedVersions);
+
+    final validVersionIds = normalizedVersions.map((item) => item.id).toSet();
+    final normalizedPostTasks = _document.postProductionTasks.map((task) {
+      return task.copyWith(
+        clearSceneId:
+            task.sceneId != null && !validSceneIds.contains(task.sceneId),
+        clearVersionId:
+            task.versionId != null && !validVersionIds.contains(task.versionId),
+      );
+    }).toList(growable: false);
+    _document.postProductionTasks
+      ..clear()
+      ..addAll(normalizedPostTasks);
+
+    final normalizedMissingMaterials = _document.missingMaterials.map((item) {
+      return item.copyWith(
+        clearSceneId:
+            item.sceneId != null && !validSceneIds.contains(item.sceneId),
+        clearShotId: item.shotId != null && !validShotIds.contains(item.shotId),
+      );
+    }).toList(growable: false);
+    _document.missingMaterials
+      ..clear()
+      ..addAll(normalizedMissingMaterials);
 
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.copyWith(

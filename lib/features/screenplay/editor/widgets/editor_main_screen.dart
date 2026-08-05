@@ -17,6 +17,7 @@ import 'package:filmsoz_studio/features/screenplay/formatting/smart_formatting_s
 import 'package:filmsoz_studio/features/screenplay/navigator/scene_navigator.dart';
 import 'package:filmsoz_studio/features/screenplay/management/production_management_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/pdf/screenplay_pdf_export_dialog.dart';
+import 'package:filmsoz_studio/features/screenplay/postproduction/postproduction_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_service.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_toolbar.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning_dialog.dart';
@@ -1963,6 +1964,20 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     );
   }
 
+  Future<void> _showPostProduction() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return PostProductionDialog(
+          controller: _controller,
+          projectName: _controller.projectName,
+          onSceneSelected: _selectScene,
+        );
+      },
+    );
+  }
+
   Future<void> _showCharacterStatistics() async {
     final statistics = _productivityService.characterStatistics(
       _controller.document,
@@ -3194,6 +3209,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           shift: true,
         ): () => unawaited(_showShootingControl()),
         const SingleActivator(
+          LogicalKeyboardKey.keyU,
+          control: true,
+          shift: true,
+        ): () => unawaited(_showPostProduction()),
+        const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
           alt: true,
@@ -3284,6 +3304,9 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   },
                   onOpenShootingControl: () {
                     unawaited(_showShootingControl());
+                  },
+                  onOpenPostProduction: () {
+                    unawaited(_showPostProduction());
                   },
                   onUndo: _undo,
                   onRedo: _redo,

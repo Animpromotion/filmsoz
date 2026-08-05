@@ -3,6 +3,7 @@ import 'package:filmsoz_studio/features/screenplay/document/block_type.dart';
 import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
+import 'package:filmsoz_studio/features/screenplay/postproduction/postproduction.dart';
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
 import 'package:filmsoz_studio/features/screenplay/shooting_control/shooting_control.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
@@ -19,6 +20,11 @@ class FilmDocument {
     Map<String, List<StoryboardShot>>? storyboardShots,
     Map<String, List<ShotTake>>? shotTakes,
     Map<String, ShootingDayJournal>? shootingDayJournals,
+    Map<String, ScenePostProductionData>? scenePostProduction,
+    List<PostProductionSequence>? postProductionSequences,
+    List<EditVersion>? editVersions,
+    List<PostProductionTask>? postProductionTasks,
+    List<MissingMaterialItem>? missingMaterials,
     String budgetCurrency = 'TJS',
     ScreenplayGoals? goals,
   })  : sceneNotes =
@@ -52,6 +58,21 @@ class FilmDocument {
         shootingDayJournals = Map<String, ShootingDayJournal>.of(
           shootingDayJournals ?? const <String, ShootingDayJournal>{},
         ),
+        scenePostProduction = Map<String, ScenePostProductionData>.of(
+          scenePostProduction ?? const <String, ScenePostProductionData>{},
+        ),
+        postProductionSequences = List<PostProductionSequence>.of(
+          postProductionSequences ?? const <PostProductionSequence>[],
+        ),
+        editVersions = List<EditVersion>.of(
+          editVersions ?? const <EditVersion>[],
+        ),
+        postProductionTasks = List<PostProductionTask>.of(
+          postProductionTasks ?? const <PostProductionTask>[],
+        ),
+        missingMaterials = List<MissingMaterialItem>.of(
+          missingMaterials ?? const <MissingMaterialItem>[],
+        ),
         budgetCurrency = budgetCurrency.trim().isEmpty
             ? 'TJS'
             : budgetCurrency.trim().toUpperCase(),
@@ -67,6 +88,11 @@ class FilmDocument {
   final Map<String, List<StoryboardShot>> storyboardShots;
   final Map<String, List<ShotTake>> shotTakes;
   final Map<String, ShootingDayJournal> shootingDayJournals;
+  final Map<String, ScenePostProductionData> scenePostProduction;
+  final List<PostProductionSequence> postProductionSequences;
+  final List<EditVersion> editVersions;
+  final List<PostProductionTask> postProductionTasks;
+  final List<MissingMaterialItem> missingMaterials;
   String budgetCurrency;
   ScreenplayGoals goals;
 
@@ -209,6 +235,50 @@ class FilmDocument {
     return shootingDayJournals[dayId] ?? const ShootingDayJournal();
   }
 
+  ScenePostProductionData scenePostProductionFor(String sceneId) {
+    return scenePostProduction[sceneId] ?? const ScenePostProductionData();
+  }
+
+  PostProductionSequence? postProductionSequenceById(String sequenceId) {
+    for (final sequence in postProductionSequences) {
+      if (sequence.id == sequenceId) {
+        return sequence;
+      }
+    }
+
+    return null;
+  }
+
+  EditVersion? editVersionById(String versionId) {
+    for (final version in editVersions) {
+      if (version.id == versionId) {
+        return version;
+      }
+    }
+
+    return null;
+  }
+
+  PostProductionTask? postProductionTaskById(String taskId) {
+    for (final task in postProductionTasks) {
+      if (task.id == taskId) {
+        return task;
+      }
+    }
+
+    return null;
+  }
+
+  MissingMaterialItem? missingMaterialById(String itemId) {
+    for (final item in missingMaterials) {
+      if (item.id == itemId) {
+        return item;
+      }
+    }
+
+    return null;
+  }
+
   ShootingDayPlan? shootingDayById(String dayId) {
     for (final day in shootingDays) {
       if (day.id == dayId) {
@@ -251,6 +321,20 @@ class FilmDocument {
       'shootingDayJournals': shootingDayJournals.map(
         (dayId, journal) => MapEntry(dayId, journal.toJson()),
       ),
+      'scenePostProduction': scenePostProduction.map(
+        (sceneId, data) => MapEntry(sceneId, data.toJson()),
+      ),
+      'postProductionSequences': postProductionSequences
+          .map((sequence) => sequence.toJson())
+          .toList(growable: false),
+      'editVersions': editVersions
+          .map((version) => version.toJson())
+          .toList(growable: false),
+      'postProductionTasks': postProductionTasks
+          .map((task) => task.toJson())
+          .toList(growable: false),
+      'missingMaterials':
+          missingMaterials.map((item) => item.toJson()).toList(growable: false),
       'budgetCurrency': budgetCurrency,
       'goals': goals.toJson(),
     };
@@ -494,6 +578,106 @@ class FilmDocument {
       }
     }
 
+    final scenePostProduction = <String, ScenePostProductionData>{};
+    final rawScenePostProduction = json['scenePostProduction'];
+
+    if (rawScenePostProduction is Map) {
+      for (final entry in rawScenePostProduction.entries) {
+        final sceneId = entry.key.toString();
+        final rawData = entry.value;
+
+        if (sceneId.isEmpty || rawData is! Map) {
+          continue;
+        }
+
+        final data = ScenePostProductionData.fromJson(
+          rawData.map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+        );
+
+        if (!data.isDefault) {
+          scenePostProduction[sceneId] = data;
+        }
+      }
+    }
+
+    final postProductionSequences = <PostProductionSequence>[];
+    final rawPostProductionSequences = json['postProductionSequences'];
+
+    if (rawPostProductionSequences is List) {
+      for (final rawSequence in rawPostProductionSequences) {
+        if (rawSequence is! Map) {
+          continue;
+        }
+
+        postProductionSequences.add(
+          PostProductionSequence.fromJson(
+            rawSequence.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final editVersions = <EditVersion>[];
+    final rawEditVersions = json['editVersions'];
+
+    if (rawEditVersions is List) {
+      for (final rawVersion in rawEditVersions) {
+        if (rawVersion is! Map) {
+          continue;
+        }
+
+        editVersions.add(
+          EditVersion.fromJson(
+            rawVersion.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final postProductionTasks = <PostProductionTask>[];
+    final rawPostProductionTasks = json['postProductionTasks'];
+
+    if (rawPostProductionTasks is List) {
+      for (final rawTask in rawPostProductionTasks) {
+        if (rawTask is! Map) {
+          continue;
+        }
+
+        postProductionTasks.add(
+          PostProductionTask.fromJson(
+            rawTask.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
+    final missingMaterials = <MissingMaterialItem>[];
+    final rawMissingMaterials = json['missingMaterials'];
+
+    if (rawMissingMaterials is List) {
+      for (final rawItem in rawMissingMaterials) {
+        if (rawItem is! Map) {
+          continue;
+        }
+
+        missingMaterials.add(
+          MissingMaterialItem.fromJson(
+            rawItem.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          ),
+        );
+      }
+    }
+
     final rawBudgetCurrency = json['budgetCurrency']?.toString().trim();
     final budgetCurrency =
         rawBudgetCurrency == null || rawBudgetCurrency.isEmpty
@@ -555,6 +739,62 @@ class FilmDocument {
             .toList(growable: true),
     };
 
+    scenePostProduction.removeWhere(
+      (sceneId, _) => !validSceneIds.contains(sceneId),
+    );
+    final normalizedScenePostProduction = <String, ScenePostProductionData>{};
+
+    for (final entry in scenePostProduction.entries) {
+      final sceneShotIds =
+          storyboardShots[entry.key]?.map((shot) => shot.id).toSet() ??
+              const <String>{};
+      final sceneTakeIds = sceneShotIds
+          .expand((shotId) => normalizedShotTakes[shotId] ?? const <ShotTake>[])
+          .map((take) => take.id)
+          .toSet();
+      final data = entry.value.copyWith(
+        selectedTakeIds: entry.value.selectedTakeIds
+            .where(sceneTakeIds.contains)
+            .toList(growable: false),
+      );
+
+      if (!data.isDefault) {
+        normalizedScenePostProduction[entry.key] = data;
+      }
+    }
+
+    final normalizedSequences = postProductionSequences.map((sequence) {
+      return sequence.copyWith(
+        sceneIds: sequence.sceneIds
+            .where(validSceneIds.contains)
+            .toSet()
+            .toList(growable: false),
+      );
+    }).toList(growable: false);
+    final validSequenceIds = normalizedSequences.map((item) => item.id).toSet();
+    final normalizedVersions = editVersions.map((version) {
+      return version.sequenceId != null &&
+              !validSequenceIds.contains(version.sequenceId)
+          ? version.copyWith(clearSequenceId: true)
+          : version;
+    }).toList(growable: false);
+    final validVersionIds = normalizedVersions.map((item) => item.id).toSet();
+    final normalizedPostTasks = postProductionTasks.map((task) {
+      return task.copyWith(
+        clearSceneId:
+            task.sceneId != null && !validSceneIds.contains(task.sceneId),
+        clearVersionId:
+            task.versionId != null && !validVersionIds.contains(task.versionId),
+      );
+    }).toList(growable: false);
+    final normalizedMissingMaterials = missingMaterials.map((item) {
+      return item.copyWith(
+        clearSceneId:
+            item.sceneId != null && !validSceneIds.contains(item.sceneId),
+        clearShotId: item.shotId != null && !validShotIds.contains(item.shotId),
+      );
+    }).toList(growable: false);
+
     final normalizedBudgetItems = budgetItems.map((item) {
       return item.copyWith(
         clearSceneId:
@@ -575,6 +815,11 @@ class FilmDocument {
       storyboardShots: storyboardShots,
       shotTakes: normalizedShotTakes,
       shootingDayJournals: shootingDayJournals,
+      scenePostProduction: normalizedScenePostProduction,
+      postProductionSequences: normalizedSequences,
+      editVersions: normalizedVersions,
+      postProductionTasks: normalizedPostTasks,
+      missingMaterials: normalizedMissingMaterials,
       budgetCurrency: budgetCurrency,
       goals: goals,
     );

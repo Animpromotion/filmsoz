@@ -21,6 +21,7 @@ class EditorToolbar extends StatelessWidget {
     required this.onOpenProductionManagement,
     required this.onOpenStoryboard,
     required this.onOpenShootingControl,
+    required this.onOpenPostProduction,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -46,6 +47,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onOpenProductionManagement;
   final VoidCallback onOpenStoryboard;
   final VoidCallback onOpenShootingControl;
+  final VoidCallback onOpenPostProduction;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -61,36 +63,52 @@ class EditorToolbar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          _buildFileMenu(context),
-          _buildMenuButton('Правка'),
-          _buildMenuButton(
-            'Структура',
-            onPressed: onOpenSceneBoard,
-            tooltip: 'Структура фильма (Ctrl+Shift+B)',
+          Expanded(
+            flex: 4,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              primary: false,
+              child: Row(
+                children: [
+                  _buildFileMenu(context),
+                  _buildMenuButton('Правка'),
+                  _buildMenuButton(
+                    'Структура',
+                    onPressed: onOpenSceneBoard,
+                    tooltip: 'Структура фильма (Ctrl+Shift+B)',
+                  ),
+                  _buildMenuButton(
+                    'Съёмки',
+                    onPressed: onOpenProductionPlanning,
+                    tooltip: 'Производственное планирование (Ctrl+Shift+P)',
+                  ),
+                  _buildMenuButton(
+                    'Команда',
+                    onPressed: onOpenProductionManagement,
+                    tooltip: 'Команда, актёры и бюджет (Ctrl+Shift+T)',
+                  ),
+                  _buildMenuButton(
+                    'Раскадровка',
+                    onPressed: onOpenStoryboard,
+                    tooltip: 'Монтажный сценарий и раскадровка (Ctrl+Shift+K)',
+                  ),
+                  _buildMenuButton(
+                    'Материал',
+                    onPressed: onOpenShootingControl,
+                    tooltip: 'Контроль съёмок и монтажный учёт (Ctrl+Shift+L)',
+                  ),
+                  _buildMenuButton(
+                    'Пост',
+                    onPressed: onOpenPostProduction,
+                    tooltip: 'Постпродакшн и контроль монтажа (Ctrl+Shift+U)',
+                  ),
+                  _buildMenuButton('Формат'),
+                  _buildMenuButton('AI'),
+                  _buildExportMenu(),
+                ],
+              ),
+            ),
           ),
-          _buildMenuButton(
-            'Съёмки',
-            onPressed: onOpenProductionPlanning,
-            tooltip: 'Производственное планирование (Ctrl+Shift+P)',
-          ),
-          _buildMenuButton(
-            'Команда',
-            onPressed: onOpenProductionManagement,
-            tooltip: 'Команда, актёры и бюджет (Ctrl+Shift+T)',
-          ),
-          _buildMenuButton(
-            'Раскадровка',
-            onPressed: onOpenStoryboard,
-            tooltip: 'Монтажный сценарий и раскадровка (Ctrl+Shift+K)',
-          ),
-          _buildMenuButton(
-            'Материал',
-            onPressed: onOpenShootingControl,
-            tooltip: 'Контроль съёмок и монтажный учёт (Ctrl+Shift+L)',
-          ),
-          _buildMenuButton('Формат'),
-          _buildMenuButton('AI'),
-          _buildExportMenu(),
           const SizedBox(width: 6),
           const VerticalDivider(
             width: 1,
@@ -110,76 +128,84 @@ class EditorToolbar extends StatelessWidget {
             tooltip: 'Вернуть (Ctrl+Y / Ctrl+Shift+Z)',
             onPressed: canRedo ? onRedo : null,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Center(
-              child: Tooltip(
-                message: isDirty
-                    ? 'Есть изменения, не сохранённые в файле проекта'
-                    : 'Проект сохранён',
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        projectName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFE0E0E0),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    if (isDirty) ...[
-                      const SizedBox(width: 6),
-                      const Text(
-                        '●',
-                        style: TextStyle(
-                          color: Color(0xFFE5A93C),
-                          fontSize: 9,
-                        ),
-                      ),
-                    ],
-                  ],
+          const SizedBox(width: 8),
+          Flexible(
+            child: _buildProjectStatus(),
+          ),
+          const SizedBox(width: 8),
+          _buildSaveButton(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProjectStatus() {
+    return Center(
+      child: Tooltip(
+        message: isDirty
+            ? 'Есть изменения, не сохранённые в файле проекта'
+            : 'Проект сохранён',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                projectName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFE0E0E0),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 12),
-          TextButton.icon(
-            onPressed: isSaving ? null : onSave,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 4,
+            if (isDirty) ...[
+              const SizedBox(width: 6),
+              const Text(
+                '●',
+                style: TextStyle(
+                  color: Color(0xFFE5A93C),
+                  fontSize: 9,
+                ),
               ),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              foregroundColor: const Color(0xFFE0E0E0),
-              disabledForegroundColor: const Color(0xFF888888),
-            ),
-            icon: isSaving
-                ? const SizedBox(
-                    width: 13,
-                    height: 13,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                    ),
-                  )
-                : const Icon(
-                    Icons.save_outlined,
-                    size: 16,
-                  ),
-            label: Text(
-              isSaving ? 'Сохранение...' : 'Сохранить',
-              style: const TextStyle(
-                fontSize: 12,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSaveButton() {
+    return TextButton.icon(
+      onPressed: isSaving ? null : onSave,
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 4,
+        ),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        foregroundColor: const Color(0xFFE0E0E0),
+        disabledForegroundColor: const Color(0xFF888888),
+      ),
+      icon: isSaving
+          ? const SizedBox(
+              width: 13,
+              height: 13,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
               ),
+            )
+          : const Icon(
+              Icons.save_outlined,
+              size: 16,
             ),
-          ),
-        ],
+      label: Text(
+        isSaving ? 'Сохранение...' : 'Сохранить',
+        style: const TextStyle(
+          fontSize: 12,
+        ),
       ),
     );
   }
@@ -365,6 +391,9 @@ class EditorToolbar extends StatelessWidget {
           case _ExportMenuAction.storyboard:
             onOpenStoryboard();
             break;
+          case _ExportMenuAction.postProduction:
+            onOpenPostProduction();
+            break;
           case _ExportMenuAction.fountain:
             onExportFountain();
             break;
@@ -396,6 +425,15 @@ class EditorToolbar extends StatelessWidget {
               icon: Icons.movie_creation_outlined,
               label: 'Монтажный сценарий и раскадровка...',
               shortcut: 'Ctrl+Shift+K',
+            ),
+          ),
+          PopupMenuDivider(),
+          PopupMenuItem<_ExportMenuAction>(
+            value: _ExportMenuAction.postProduction,
+            child: _MenuRow(
+              icon: Icons.edit_note_outlined,
+              label: 'Постпродакшн и контроль монтажа...',
+              shortcut: 'Ctrl+Shift+U',
             ),
           ),
           PopupMenuDivider(),
@@ -489,7 +527,13 @@ enum _FileMenuAction {
   openRecentProject,
 }
 
-enum _ExportMenuAction { pdf, productionReport, storyboard, fountain }
+enum _ExportMenuAction {
+  pdf,
+  productionReport,
+  storyboard,
+  postProduction,
+  fountain,
+}
 
 class _FileMenuSelection {
   const _FileMenuSelection(this.action) : recentPath = null;
