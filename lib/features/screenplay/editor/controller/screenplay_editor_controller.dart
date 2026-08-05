@@ -9,6 +9,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_document.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/local_storage_service.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
+import 'package:filmsoz_studio/features/screenplay/shooting_control/shooting_control.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
 import 'package:path/path.dart' as path;
 
@@ -595,13 +596,26 @@ class ScreenplayEditorController extends ChangeNotifier {
     final sourceShots = _document.storyboardShots[sceneId];
 
     if (sourceShots != null && sourceShots.isNotEmpty) {
-      _document.storyboardShots[duplicatedBlocks.first.id] = sourceShots
-          .map(
-            (shot) => shot.copyWith(
-              id: 'shot_${_generateBlockId()}',
-            ),
-          )
-          .toList(growable: true);
+      final duplicatedShots = <StoryboardShot>[];
+
+      for (final sourceShot in sourceShots) {
+        final duplicatedShotId = 'shot_${_generateBlockId()}';
+        duplicatedShots.add(sourceShot.copyWith(id: duplicatedShotId));
+
+        final sourceTakes = _document.shotTakes[sourceShot.id];
+
+        if (sourceTakes != null && sourceTakes.isNotEmpty) {
+          _document.shotTakes[duplicatedShotId] = sourceTakes
+              .map(
+                (take) => take.copyWith(
+                  id: 'take_${_generateBlockId()}',
+                ),
+              )
+              .toList(growable: true);
+        }
+      }
+
+      _document.storyboardShots[duplicatedBlocks.first.id] = duplicatedShots;
     }
 
     _markDocumentChanged();
@@ -635,7 +649,14 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.sceneNotes.remove(sceneId);
     _document.sceneDevelopment.remove(sceneId);
     _document.sceneProduction.remove(sceneId);
-    _document.storyboardShots.remove(sceneId);
+    final removedShots = _document.storyboardShots.remove(sceneId);
+
+    if (removedShots != null) {
+      for (final shot in removedShots) {
+        _document.shotTakes.remove(shot.id);
+      }
+    }
+
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.sceneId == sceneId ? item.copyWith(clearSceneId: true) : item;
     }).toList(growable: false);
@@ -846,6 +867,18 @@ class ScreenplayEditorController extends ChangeNotifier {
     _finishTypingGroup();
     _pushUndoSnapshot();
     shots.insert(sourceIndex + 1, duplicate);
+    final sourceTakes = _document.shotTakes[source.id];
+
+    if (sourceTakes != null && sourceTakes.isNotEmpty) {
+      _document.shotTakes[id] = sourceTakes
+          .map(
+            (take) => take.copyWith(
+              id: 'take_${_generateBlockId()}',
+            ),
+          )
+          .toList(growable: true);
+    }
+
     _markDocumentChanged();
     return id;
   }
@@ -866,6 +899,7 @@ class ScreenplayEditorController extends ChangeNotifier {
     _finishTypingGroup();
     _pushUndoSnapshot();
     shots.removeAt(index);
+    _document.shotTakes.remove(shotId);
 
     if (shots.isEmpty) {
       _document.storyboardShots.remove(sceneId);
@@ -895,6 +929,161 @@ class ScreenplayEditorController extends ChangeNotifier {
     _pushUndoSnapshot();
     final shot = shots.removeAt(oldIndex);
     shots.insert(newIndex, shot);
+    _markDocumentChanged();
+    return true;
+  }
+
+  String? createShotTake(
+    String shotId, {
+    ShotTake? template,
+    String? shootingDayId,
+  }) {
+    if (!_allStoryboardShotIds().contains(shotId)) {
+      return null;
+    }
+
+    final takes = _document.shotTakes[shotId] ?? const <ShotTake>[];
+    final id = 'take_${_generateBlockId()}';
+    var nextTakeNumber = 1;
+
+    for (final take in takes) {
+      if (take.takeNumber >= nextTakeNumber) {
+        nextTakeNumber = take.takeNumber + 1;
+      }
+    }
+    final source = template;
+    final take = source == null
+        ? ShotTake(
+            id: id,
+            takeNumber: nextTakeNumber,
+            shootingDayId: _validShootingDayId(shootingDayId),
+          )
+        : source.copyWith(
+            id: id,
+            takeNumber: nextTakeNumber,
+            shootingDayId: _validShootingDayId(
+              shootingDayId ?? source.shootingDayId,
+            ),
+            clearShootingDayId:
+                _validShootingDayId(shootingDayId ?? source.shootingDayId) ==
+                    null,
+          );
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    _document.shotTakes
+        .putIfAbsent(shotId, () => <ShotTake>[])
+        .add(_normalizeShotTake(take));
+    _markDocumentChanged();
+    return id;
+  }
+
+  bool updateShotTake(String shotId, ShotTake take) {
+    final takes = _document.shotTakes[shotId];
+
+    if (takes == null) {
+      return false;
+    }
+
+    final index = takes.indexWhere((item) => item.id == take.id);
+
+    if (index == -1) {
+      return false;
+    }
+
+    final normalized = _normalizeShotTake(take);
+    final current = takes[index];
+
+    if (_sameShotTake(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    if (normalized.status == ShotTakeStatus.selected) {
+      for (var takeIndex = 0; takeIndex < takes.length; takeIndex++) {
+        final other = takes[takeIndex];
+
+        if (other.id != normalized.id &&
+            other.status == ShotTakeStatus.selected) {
+          takes[takeIndex] = other.copyWith(status: ShotTakeStatus.recorded);
+        }
+      }
+    }
+
+    takes[index] = normalized;
+    _markDocumentChanged();
+    return true;
+  }
+
+  String? duplicateShotTake(String shotId, String takeId) {
+    final source = _document.shotTakeById(shotId, takeId);
+
+    if (source == null) {
+      return null;
+    }
+
+    return createShotTake(
+      shotId,
+      template: source.copyWith(
+        status: source.status == ShotTakeStatus.selected
+            ? ShotTakeStatus.recorded
+            : source.status,
+      ),
+      shootingDayId: source.shootingDayId,
+    );
+  }
+
+  bool deleteShotTake(String shotId, String takeId) {
+    final takes = _document.shotTakes[shotId];
+
+    if (takes == null) {
+      return false;
+    }
+
+    final index = takes.indexWhere((take) => take.id == takeId);
+
+    if (index == -1) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+    takes.removeAt(index);
+
+    if (takes.isEmpty) {
+      _document.shotTakes.remove(shotId);
+    }
+
+    _markDocumentChanged();
+    return true;
+  }
+
+  bool setShootingDayJournal(
+    String dayId,
+    ShootingDayJournal journal,
+  ) {
+    if (_document.shootingDayById(dayId) == null) {
+      return false;
+    }
+
+    final normalized = _normalizeShootingDayJournal(journal);
+    final current = _document.shootingDayJournalFor(dayId);
+
+    if (_sameShootingDayJournal(current, normalized)) {
+      return false;
+    }
+
+    _finishTypingGroup();
+    _pushUndoSnapshot();
+
+    if (normalized.isDefault) {
+      _document.shootingDayJournals.remove(dayId);
+    } else {
+      _document.shootingDayJournals[dayId] = normalized;
+    }
+
     _markDocumentChanged();
     return true;
   }
@@ -966,6 +1155,20 @@ class ScreenplayEditorController extends ChangeNotifier {
     _finishTypingGroup();
     _pushUndoSnapshot();
     _document.shootingDays.removeAt(index);
+    _document.shootingDayJournals.remove(dayId);
+    final normalizedTakeMap = <String, List<ShotTake>>{
+      for (final entry in _document.shotTakes.entries)
+        entry.key: entry.value
+            .map(
+              (take) => take.shootingDayId == dayId
+                  ? take.copyWith(clearShootingDayId: true)
+                  : take,
+            )
+            .toList(growable: true),
+    };
+    _document.shotTakes
+      ..clear()
+      ..addAll(normalizedTakeMap);
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.shootingDayId == dayId
           ? item.copyWith(clearShootingDayId: true)
@@ -1166,6 +1369,143 @@ class ScreenplayEditorController extends ChangeNotifier {
     _document.budgetCurrency = normalized;
     _markDocumentChanged();
     return true;
+  }
+
+  Set<String> _allStoryboardShotIds() {
+    return _document.storyboardShots.values
+        .expand((shots) => shots)
+        .map((shot) => shot.id)
+        .toSet();
+  }
+
+  String? _validShootingDayId(String? dayId) {
+    if (dayId == null || _document.shootingDayById(dayId) == null) {
+      return null;
+    }
+
+    return dayId;
+  }
+
+  ShotTake _normalizeShotTake(ShotTake take) {
+    final normalizedPhotos = take.continuityPhotos
+        .where(
+          (photo) =>
+              photo.id.trim().isNotEmpty && photo.base64Data.trim().isNotEmpty,
+        )
+        .map(
+          (photo) => photo.copyWith(
+            fileName: photo.fileName.trim(),
+            mimeType: photo.mimeType.trim().isEmpty
+                ? 'image/jpeg'
+                : photo.mimeType.trim(),
+            note: photo.note.trim(),
+          ),
+        )
+        .toList(growable: false);
+
+    return ShotTake(
+      id: take.id,
+      takeNumber: take.takeNumber <= 0 ? 1 : take.takeNumber,
+      status: take.status,
+      shootingDayId: _validShootingDayId(take.shootingDayId),
+      timecode: take.timecode.trim(),
+      durationSeconds: take.durationSeconds < 0 ? 0 : take.durationSeconds,
+      mediaCard: take.mediaCard.trim(),
+      camera: take.camera.trim(),
+      fileName: take.fileName.trim(),
+      rating: take.rating.clamp(0, 5).toInt(),
+      directorNotes: take.directorNotes.trim(),
+      cameraNotes: take.cameraNotes.trim(),
+      soundNotes: take.soundNotes.trim(),
+      rejectionReason: take.rejectionReason.trim(),
+      costumeContinuity: take.costumeContinuity.trim(),
+      makeupContinuity: take.makeupContinuity.trim(),
+      propsContinuity: take.propsContinuity.trim(),
+      actorPositions: take.actorPositions.trim(),
+      continuityPhotos: normalizedPhotos,
+    );
+  }
+
+  ShootingDayJournal _normalizeShootingDayJournal(
+    ShootingDayJournal journal,
+  ) {
+    return ShootingDayJournal(
+      actualCrewCall: journal.actualCrewCall.trim(),
+      actualFirstShot: journal.actualFirstShot.trim(),
+      actualWrap: journal.actualWrap.trim(),
+      weather: journal.weather.trim(),
+      summary: journal.summary.trim(),
+      incidents: journal.incidents.trim(),
+      mediaBackup: journal.mediaBackup.trim(),
+      cameraReport: journal.cameraReport.trim(),
+      soundReport: journal.soundReport.trim(),
+      notes: journal.notes.trim(),
+    );
+  }
+
+  bool _sameShotTake(ShotTake first, ShotTake second) {
+    return first.id == second.id &&
+        first.takeNumber == second.takeNumber &&
+        first.status == second.status &&
+        first.shootingDayId == second.shootingDayId &&
+        first.timecode == second.timecode &&
+        first.durationSeconds == second.durationSeconds &&
+        first.mediaCard == second.mediaCard &&
+        first.camera == second.camera &&
+        first.fileName == second.fileName &&
+        first.rating == second.rating &&
+        first.directorNotes == second.directorNotes &&
+        first.cameraNotes == second.cameraNotes &&
+        first.soundNotes == second.soundNotes &&
+        first.rejectionReason == second.rejectionReason &&
+        first.costumeContinuity == second.costumeContinuity &&
+        first.makeupContinuity == second.makeupContinuity &&
+        first.propsContinuity == second.propsContinuity &&
+        first.actorPositions == second.actorPositions &&
+        _sameContinuityPhotos(
+          first.continuityPhotos,
+          second.continuityPhotos,
+        );
+  }
+
+  bool _sameContinuityPhotos(
+    List<ContinuityPhoto> first,
+    List<ContinuityPhoto> second,
+  ) {
+    if (first.length != second.length) {
+      return false;
+    }
+
+    for (var index = 0; index < first.length; index++) {
+      final firstPhoto = first[index];
+      final secondPhoto = second[index];
+
+      if (firstPhoto.id != secondPhoto.id ||
+          firstPhoto.fileName != secondPhoto.fileName ||
+          firstPhoto.mimeType != secondPhoto.mimeType ||
+          firstPhoto.base64Data != secondPhoto.base64Data ||
+          firstPhoto.note != secondPhoto.note) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool _sameShootingDayJournal(
+    ShootingDayJournal first,
+    ShootingDayJournal second,
+  ) {
+    return first.actualCrewCall == second.actualCrewCall &&
+        first.actualFirstShot == second.actualFirstShot &&
+        first.actualWrap == second.actualWrap &&
+        first.weather == second.weather &&
+        first.summary == second.summary &&
+        first.incidents == second.incidents &&
+        first.mediaBackup == second.mediaBackup &&
+        first.cameraReport == second.cameraReport &&
+        first.soundReport == second.soundReport &&
+        first.notes == second.notes;
   }
 
   StoryboardShot _normalizeStoryboardShot(StoryboardShot shot) {
@@ -1804,6 +2144,8 @@ class ScreenplayEditorController extends ChangeNotifier {
       productionPeople: source.productionPeople,
       budgetItems: source.budgetItems,
       storyboardShots: source.storyboardShots,
+      shotTakes: source.shotTakes,
+      shootingDayJournals: source.shootingDayJournals,
       budgetCurrency: source.budgetCurrency,
       goals: source.goals,
     );
@@ -1838,6 +2180,11 @@ class ScreenplayEditorController extends ChangeNotifier {
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
 
+    final validShotIds = _allStoryboardShotIds();
+    _document.shotTakes.removeWhere(
+      (shotId, _) => !validShotIds.contains(shotId),
+    );
+
     final normalizedDays = _document.shootingDays.map((day) {
       return day.copyWith(
         sceneIds: day.sceneIds
@@ -1852,6 +2199,24 @@ class ScreenplayEditorController extends ChangeNotifier {
       ..addAll(normalizedDays);
 
     final validDayIds = normalizedDays.map((day) => day.id).toSet();
+    _document.shootingDayJournals.removeWhere(
+      (dayId, _) => !validDayIds.contains(dayId),
+    );
+    final normalizedTakeMap = <String, List<ShotTake>>{
+      for (final entry in _document.shotTakes.entries)
+        entry.key: entry.value
+            .map(
+              (take) => take.shootingDayId != null &&
+                      !validDayIds.contains(take.shootingDayId)
+                  ? take.copyWith(clearShootingDayId: true)
+                  : take,
+            )
+            .toList(growable: true),
+    };
+    _document.shotTakes
+      ..clear()
+      ..addAll(normalizedTakeMap);
+
     final normalizedBudgetItems = _document.budgetItems.map((item) {
       return item.copyWith(
         clearSceneId:

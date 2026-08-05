@@ -4,6 +4,7 @@ import 'package:filmsoz_studio/features/screenplay/document/film_block.dart';
 import 'package:filmsoz_studio/features/screenplay/document/scene_section.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning.dart';
 import 'package:filmsoz_studio/features/screenplay/management/production_management.dart';
+import 'package:filmsoz_studio/features/screenplay/shooting_control/shooting_control.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_shot.dart';
 
 class FilmDocument {
@@ -16,6 +17,8 @@ class FilmDocument {
     List<ProductionPerson>? productionPeople,
     List<BudgetItem>? budgetItems,
     Map<String, List<StoryboardShot>>? storyboardShots,
+    Map<String, List<ShotTake>>? shotTakes,
+    Map<String, ShootingDayJournal>? shootingDayJournals,
     String budgetCurrency = 'TJS',
     ScreenplayGoals? goals,
   })  : sceneNotes =
@@ -41,6 +44,14 @@ class FilmDocument {
                   .entries)
             entry.key: List<StoryboardShot>.of(entry.value),
         },
+        shotTakes = <String, List<ShotTake>>{
+          for (final entry
+              in (shotTakes ?? const <String, List<ShotTake>>{}).entries)
+            entry.key: List<ShotTake>.of(entry.value),
+        },
+        shootingDayJournals = Map<String, ShootingDayJournal>.of(
+          shootingDayJournals ?? const <String, ShootingDayJournal>{},
+        ),
         budgetCurrency = budgetCurrency.trim().isEmpty
             ? 'TJS'
             : budgetCurrency.trim().toUpperCase(),
@@ -54,6 +65,8 @@ class FilmDocument {
   final List<ProductionPerson> productionPeople;
   final List<BudgetItem> budgetItems;
   final Map<String, List<StoryboardShot>> storyboardShots;
+  final Map<String, List<ShotTake>> shotTakes;
+  final Map<String, ShootingDayJournal> shootingDayJournals;
   String budgetCurrency;
   ScreenplayGoals goals;
 
@@ -170,6 +183,32 @@ class FilmDocument {
     return null;
   }
 
+  List<ShotTake> shotTakesFor(String shotId) {
+    return List<ShotTake>.unmodifiable(
+      shotTakes[shotId] ?? const <ShotTake>[],
+    );
+  }
+
+  ShotTake? shotTakeById(String shotId, String takeId) {
+    final takes = shotTakes[shotId];
+
+    if (takes == null) {
+      return null;
+    }
+
+    for (final take in takes) {
+      if (take.id == takeId) {
+        return take;
+      }
+    }
+
+    return null;
+  }
+
+  ShootingDayJournal shootingDayJournalFor(String dayId) {
+    return shootingDayJournals[dayId] ?? const ShootingDayJournal();
+  }
+
   ShootingDayPlan? shootingDayById(String dayId) {
     for (final day in shootingDays) {
       if (day.id == dayId) {
@@ -202,6 +241,15 @@ class FilmDocument {
           sceneId,
           shots.map((shot) => shot.toJson()).toList(growable: false),
         ),
+      ),
+      'shotTakes': shotTakes.map(
+        (shotId, takes) => MapEntry(
+          shotId,
+          takes.map((take) => take.toJson()).toList(growable: false),
+        ),
+      ),
+      'shootingDayJournals': shootingDayJournals.map(
+        (dayId, journal) => MapEntry(dayId, journal.toJson()),
       ),
       'budgetCurrency': budgetCurrency,
       'goals': goals.toJson(),
@@ -388,6 +436,64 @@ class FilmDocument {
       }
     }
 
+    final shotTakes = <String, List<ShotTake>>{};
+    final rawShotTakes = json['shotTakes'];
+
+    if (rawShotTakes is Map) {
+      for (final entry in rawShotTakes.entries) {
+        final shotId = entry.key.toString();
+        final rawTakes = entry.value;
+
+        if (shotId.isEmpty || rawTakes is! List) {
+          continue;
+        }
+
+        final takes = <ShotTake>[];
+
+        for (final rawTake in rawTakes) {
+          if (rawTake is! Map) {
+            continue;
+          }
+
+          takes.add(
+            ShotTake.fromJson(
+              rawTake.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ),
+            ),
+          );
+        }
+
+        if (takes.isNotEmpty) {
+          shotTakes[shotId] = takes;
+        }
+      }
+    }
+
+    final shootingDayJournals = <String, ShootingDayJournal>{};
+    final rawShootingDayJournals = json['shootingDayJournals'];
+
+    if (rawShootingDayJournals is Map) {
+      for (final entry in rawShootingDayJournals.entries) {
+        final dayId = entry.key.toString();
+        final rawJournal = entry.value;
+
+        if (dayId.isEmpty || rawJournal is! Map) {
+          continue;
+        }
+
+        final journal = ShootingDayJournal.fromJson(
+          rawJournal.map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+        );
+
+        if (!journal.isDefault) {
+          shootingDayJournals[dayId] = journal;
+        }
+      }
+    }
+
     final rawBudgetCurrency = json['budgetCurrency']?.toString().trim();
     final budgetCurrency =
         rawBudgetCurrency == null || rawBudgetCurrency.isEmpty
@@ -420,6 +526,12 @@ class FilmDocument {
       (sceneId, _) => !validSceneIds.contains(sceneId),
     );
 
+    final validShotIds = storyboardShots.values
+        .expand((shots) => shots)
+        .map((shot) => shot.id)
+        .toSet();
+    shotTakes.removeWhere((shotId, _) => !validShotIds.contains(shotId));
+
     final normalizedDays = shootingDays.map((day) {
       final sceneIds =
           day.sceneIds.where(validSceneIds.contains).toList(growable: false);
@@ -427,6 +539,22 @@ class FilmDocument {
     }).toList(growable: false);
 
     final validShootingDayIds = normalizedDays.map((day) => day.id).toSet();
+    shootingDayJournals.removeWhere(
+      (dayId, _) => !validShootingDayIds.contains(dayId),
+    );
+
+    final normalizedShotTakes = <String, List<ShotTake>>{
+      for (final entry in shotTakes.entries)
+        entry.key: entry.value
+            .map(
+              (take) => take.shootingDayId != null &&
+                      !validShootingDayIds.contains(take.shootingDayId)
+                  ? take.copyWith(clearShootingDayId: true)
+                  : take,
+            )
+            .toList(growable: true),
+    };
+
     final normalizedBudgetItems = budgetItems.map((item) {
       return item.copyWith(
         clearSceneId:
@@ -445,6 +573,8 @@ class FilmDocument {
       productionPeople: productionPeople,
       budgetItems: normalizedBudgetItems,
       storyboardShots: storyboardShots,
+      shotTakes: normalizedShotTakes,
+      shootingDayJournals: shootingDayJournals,
       budgetCurrency: budgetCurrency,
       goals: goals,
     );

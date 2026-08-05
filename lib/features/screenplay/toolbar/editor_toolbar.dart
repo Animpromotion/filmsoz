@@ -20,6 +20,7 @@ class EditorToolbar extends StatelessWidget {
     required this.onOpenProductionPlanning,
     required this.onOpenProductionManagement,
     required this.onOpenStoryboard,
+    required this.onOpenShootingControl,
     required this.onUndo,
     required this.onRedo,
     required this.isSaving,
@@ -44,6 +45,7 @@ class EditorToolbar extends StatelessWidget {
   final VoidCallback onOpenProductionPlanning;
   final VoidCallback onOpenProductionManagement;
   final VoidCallback onOpenStoryboard;
+  final VoidCallback onOpenShootingControl;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
 
@@ -80,6 +82,11 @@ class EditorToolbar extends StatelessWidget {
             'Раскадровка',
             onPressed: onOpenStoryboard,
             tooltip: 'Монтажный сценарий и раскадровка (Ctrl+Shift+K)',
+          ),
+          _buildMenuButton(
+            'Материал',
+            onPressed: onOpenShootingControl,
+            tooltip: 'Контроль съёмок и монтажный учёт (Ctrl+Shift+L)',
           ),
           _buildMenuButton('Формат'),
           _buildMenuButton('AI'),

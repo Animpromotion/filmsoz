@@ -20,6 +20,7 @@ import 'package:filmsoz_studio/features/screenplay/pdf/screenplay_pdf_export_dia
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_service.dart';
 import 'package:filmsoz_studio/features/screenplay/productivity/screenplay_productivity_toolbar.dart';
 import 'package:filmsoz_studio/features/screenplay/production/production_planning_dialog.dart';
+import 'package:filmsoz_studio/features/screenplay/shooting_control/shooting_control_dialog.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/fountain_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/storage/project_file_service.dart';
 import 'package:filmsoz_studio/features/screenplay/storyboard/storyboard_dialog.dart';
@@ -1948,6 +1949,20 @@ class _EditorMainScreenState extends State<EditorMainScreen>
     );
   }
 
+  Future<void> _showShootingControl() async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return ShootingControlDialog(
+          controller: _controller,
+          projectName: _controller.projectName,
+          onSceneSelected: _selectScene,
+        );
+      },
+    );
+  }
+
   Future<void> _showCharacterStatistics() async {
     final statistics = _productivityService.characterStatistics(
       _controller.document,
@@ -3174,6 +3189,11 @@ class _EditorMainScreenState extends State<EditorMainScreen>
           shift: true,
         ): () => unawaited(_showStoryboard()),
         const SingleActivator(
+          LogicalKeyboardKey.keyL,
+          control: true,
+          shift: true,
+        ): () => unawaited(_showShootingControl()),
+        const SingleActivator(
           LogicalKeyboardKey.keyP,
           control: true,
           alt: true,
@@ -3261,6 +3281,9 @@ class _EditorMainScreenState extends State<EditorMainScreen>
                   },
                   onOpenStoryboard: () {
                     unawaited(_showStoryboard());
+                  },
+                  onOpenShootingControl: () {
+                    unawaited(_showShootingControl());
                   },
                   onUndo: _undo,
                   onRedo: _redo,
